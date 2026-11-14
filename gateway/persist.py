@@ -20,7 +20,7 @@ def enabled(gw) -> bool:
 def _backend(be) -> dict:
     return {"stock": be.stock, "base_stock": be.base_stock, "inbound": be.inbound, "prices": be.prices,
             "earliest_override": {g: d.isoformat() for g, d in be.earliest_override.items()},
-            "orders": be.orders, "live": be.live, "restock_used": be.restock_used}
+            "orders": be.orders, "live": be.live, "restock_used": be.restock_used, "sold": be.sold}
 
 
 def snapshot(gw) -> dict:
@@ -64,4 +64,5 @@ def load(gw) -> bool:
         be.earliest_override = {g: date.fromisoformat(d) for g, d in b["earliest_override"].items()}
         be.orders, be.live = b["orders"], b["live"]
         be.restock_used = b.get("restock_used", {})
+        be.sold = b.get("sold", {})
     return True

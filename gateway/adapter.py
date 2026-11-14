@@ -52,13 +52,16 @@ class FixtureBackend:
         self.prices = {p["gtin"]: p["unitPrice"] for p in catalog.products()}
         self.earliest_override: dict[str, date] = {}
         self.orders: list[dict] = []
-        self.restock_used: dict[str, dict[str, float]] = {}  # gtin -> restock date -> qty already sold from it
+        self.restock_used: dict[str, dict[str, float]] = {}
+        self.sold: dict[str, float] = {}  # gtin -> qty ordered from on-hand stock of re-registered (live / bridged) products  # gtin -> restock date -> qty already sold from it
         self.live: dict[str, dict] = {}  # curated products priced from the mock API (live mode)
 
     # --- real products bridged in by Discover --------------------------------
     def register(self, gtin: str, price: float, stock: float, earliest: date | None = None):
+        """A fresh read of price and stock (mock API or demo values). The source does not know our orders, so what
+        this gateway already sold from that stock is taken off again."""
         self.prices[gtin] = price
-        self.stock[gtin] = stock
+        self.stock[gtin] = max(0.0, stock - self.sold.get(gtin, 0.0))
         self.inbound.setdefault(gtin, [])
         if earliest:
             self.earliest_override[gtin] = earliest
@@ -121,6 +124,7 @@ class FixtureBackend:
             g, q = ln["gtin"], ln["qty"]
             take = min(self.stock.get(g, 0), q)
             self.stock[g] = self.stock.get(g, 0) - take
+            self.sold[g] = self.sold.get(g, 0.0) + take
             rest = q - take
             for ib in self.inbound.get(g, []):
                 if rest <= 0:
@@ -142,6 +146,7 @@ class FixtureBackend:
         """Give back the stock of an order that is being replaced (e.g. guest count changed)."""
         for ln in order["lines"]:
             self.stock[ln["gtin"]] = self.stock.get(ln["gtin"], 0) + ln["qty"]
+            self.sold[ln["gtin"]] = max(0.0, self.sold.get(ln["gtin"], 0.0) - ln["qty"])
         self.orders = [o for o in self.orders if o.get("orderId") != order.get("orderId")]
 
     # --- demo controls -------------------------------------------------------

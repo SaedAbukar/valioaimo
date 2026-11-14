@@ -44,3 +44,11 @@ def test_demo_clock_and_ops_records_need_credentials():
     assert c.get("/v1/ops/orders", headers=OPS).json()["orders"] == []
     inv = c.get("/v1/ops/inventory", headers=OPS).json()["inventory"]
     assert inv and all("schedule" in v for v in inv.values())
+
+
+def test_bench_on_a_seeded_demo_counts_only_its_own_orders(monkeypatch):
+    """make bench runs against `make run`, whose reset re-seeds the demo orders: they are not the bench's."""
+    monkeypatch.setenv("AIMO_SEED_DEMO", "1")
+    c = TestClient(make_app(live=False))
+    res = agent_bench.bench(agent_bench.local_transport(c), agents=6)
+    assert all(v["ok"] for v in res["invariants"].values()), {k: v for k, v in res["invariants"].items() if not v["ok"]}

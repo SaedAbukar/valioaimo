@@ -232,7 +232,8 @@ def llm_agent(call, model: str, name: str, spec: dict) -> dict:
 # ------------------------------------------------------------------ invariants from the gateway's own records
 def invariants(call, runs: list[dict], inventory0: dict) -> dict:
     st, od = call("GET", "/v1/ops/orders", None, OPS)[:2]
-    orders = od["orders"]
+    mine = {r["sessionId"] for r in runs}
+    orders = [o for o in od["orders"] if o["sessionId"] in mine]  # a reset may re-seed demo orders: those are not ours
     st, jwks = call("GET", "/.well-known/jwks.json", None, OPS)[:2]
     out = {}
     # 1 no oversell: per product, cumulative ordered by each delivery date <= deliverable by that date at the start

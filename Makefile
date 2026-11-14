@@ -1,3 +1,4 @@
+.PHONY: run test build index mcp setup agent bench
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
 run: build

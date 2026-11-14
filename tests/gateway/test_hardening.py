@@ -445,3 +445,20 @@ def test_orders_against_weekly_restock_deplete_it():
     assert be.reserve([line])[0]
     be.place_order({"orderId": "O1", "lines": [line]})
     assert be.available_by(g, s2d(d)) == 0 and not be.reserve([dict(line, qty=1)])[0]
+
+
+def test_re_registering_a_live_product_keeps_what_was_already_sold():
+    """Found by make bench on the seeded demo: a fresh quote of a real product must not reset sold stock."""
+    from gateway.adapter import FixtureBackend
+    from gateway.clock import Clock
+    be = FixtureBackend(Clock(frozen=True))
+    from datetime import date
+    mon = date(2026, 11, 16)
+    be.register("aimo:1", 1.0, 100, mon)
+    d = be.schedule("aimo:1")[0]["date"]
+    be.place_order({"orderId": "O1", "lines": [{"gtin": "aimo:1", "qty": 60, "deliveryDate": d}]})
+    be.register("aimo:1", 1.0, 100, mon)  # the next quote reads the same 100 from the mock API / demo values
+    assert be.available_by("aimo:1", s2d(d)) == 40
+    be.release({"orderId": "O1", "lines": [{"gtin": "aimo:1", "qty": 60}]})
+    be.register("aimo:1", 1.0, 100, mon)
+    assert be.available_by("aimo:1", s2d(d)) == 100
