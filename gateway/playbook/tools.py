@@ -480,7 +480,7 @@ PLAIN = {
     "R13": "The amount is different from your usual.",
     "R14": "The cost per guest is above your target.",
     "V1": "Valio Aimo needs to check the account balance first.",
-    "V2": "The amount looks much bigger than usual. Typo?",
+    "V2": "The amount is much bigger than usual, so someone confirms it.",
     "V3": "Ordering is paused by Valio Aimo.",
 }
 OUTCOME = {"AUTO": "auto", "NOTIFY": "tell_me", "APPROVE": "needs_ok", "BLOCK": "blocked"}

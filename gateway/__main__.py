@@ -599,6 +599,21 @@ def make_app(live: bool = True) -> Starlette:
         return JSONResponse({"runId": run.id, "model": run.events[0]["model"] if run.events else None}, status_code=201)
 
     @guarded
+    async def agent_reply(req: Request):
+        c = caller(req, "user", "human")
+        run = chat_agent.runs.get(req.path_params["rid"])
+        if not run:
+            raise NotFound("No such agent run.")
+        auth.same_buyer(c, run.buyer_id)
+        if run.status != "waiting_user":
+            raise GuardFailed("The agent is not waiting for an answer.", guard="not_waiting", fix={"wait": "poll the run's events"})
+        text = str((await body(req)).get("text", "")).strip()[:2000]
+        if not text:
+            raise GuardFailed("Say yes, or what to change.", guard="bad_input", fix={"example": {"text": "Yes, order it."}})
+        chat_agent.reply(run, gw().buyers[run.buyer_id]["agents"][0]["apiKey"], text)
+        return JSONResponse({"runId": run.id, "status": run.status})
+
+    @guarded
     async def agent_events(req: Request):
         c = caller(req, "user", "human")
         run = chat_agent.runs.get(req.path_params["rid"])
@@ -638,7 +653,7 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/ops/lost-sales", ops_lost_sales), Route("/v1/ops/inventory", ops_inventory),
         Route("/v1/demo/clock", demo_clock, methods=["POST"]),
         Route("/v1/agent/status", agent_status), Route("/v1/agent/runs", agent_runs, methods=["POST"]),
-        Route("/v1/agent/runs/{rid}/events", agent_events),
+        Route("/v1/agent/runs/{rid}/events", agent_events), Route("/v1/agent/runs/{rid}/reply", agent_reply, methods=["POST"]),
         Route("/mcp", _Asgi(mcp_asgi), methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_asgi),
     ])
     app.add_middleware(RequestLog, metrics_of=lambda: gw().metrics)

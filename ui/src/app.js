@@ -94,6 +94,7 @@ const Live = {
   agentStatus: () => Live.j('/v1/agent/status'),
   agentRun: (text) => Live.j('/v1/agent/runs', { text }),
   agentEvents: (rid, after) => Live.j(`/v1/agent/runs/${rid}/events?after=${after}&wait=20`),
+  agentReply: (rid, text) => Live.j(`/v1/agent/runs/${rid}/reply`, { text }),
 };
 
 const Replay = (() => {
@@ -282,15 +283,50 @@ function receiptHtml(o, answer) {
   </article>`;
 }
 
+// the agent's words: escape, then allow **bold** and "- " points (models sometimes add them)
+const agentText = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\s+-\s+(?=<b>|[A-Z])/g, '<br>• ').replace(/\n/g, '<br>');
+const DECISION = { auto: 'Ready to order', tell_me: 'Ready to order, I’ll tell you', needs_ok: 'Needs an OK first', blocked: 'Can’t order this' };
+function proposalHtml(e, live) {
+  const p = e.plan;
+  const lines = (p && p.lines) || [];
+  return `<article class="card receipt proposal" data-type="basket">
+    <div class="receipt-h"><span class="ic">${ic('basket')}</span><div><b>Proposed basket</b><small>${esc(DECISION[e.decision] || 'For you to check')}${e.decision === 'needs_ok' && e.reasons ? ' · ' + esc(e.reasons[0] || '') : ''}</small></div></div>
+    <p class="receipt-note top">${agentText(e.answer)}</p>
+    ${lines.length ? `<ul class="receipt-lines">${lines.map((l) => `<li><span class="r-name">${esc(l.name)}<small>${esc(qty(l.qty, l.unit))} × ${esc(eur2(l.unitPrice))}${l.why ? ' · ' + esc(l.why) : ''}</small></span><b class="num">${esc(eur2(l.lineTotal))}</b></li>`).join('')}</ul>
+      <div class="receipt-total"><span>Total${p.perGuest ? ` <small class="muted">${esc(eur2(p.perGuest))} per guest</small>` : ''}</span><b class="num">${esc(eur2(p.total))}</b></div>` : ''}
+    ${(p && p.cantDo || []).map((c) => `<p class="receipt-note">Can’t do: ${esc(c.need)}${c.allergen ? ' (' + esc(c.allergen) + ')' : ''}${c.alternative ? ' · safe alternative: ' + esc(c.alternative) : ''}</p>`).join('')}
+    ${live ? `<div class="acts pad"><button class="btn primary" data-agent-say="Yes, order it.">${e.decision === 'needs_ok' ? 'Send for OK' : 'Order this'}</button><button class="btn" data-agent-change>Change something</button></div>` : ''}
+  </article>`;
+}
+
 function agentView() {
   const r = S.agentRun;
-  const steps = agentSteps(r.events);
   const running = r.status === 'running';
-  const stepsHtml = steps.length ? `<ol class="agent-steps">${steps.map((s, i) => {
-    const now = running && i === steps.length - 1;
-    return `<li class="${now ? 'now' : 'done'}">${now ? '<i></i>' : ic('check')}<span>${esc(s)}${now ? '…' : ''}</span></li>`;
-  }).join('')}</ol>` : '';
-  const row = (e) => {
+  const out = []; let group = [];
+  const flush = (last) => {
+    if (!group.length) return;
+    out.push(`<ol class="agent-steps">${group.map((s, i) => {
+      const now = last && running && i === group.length - 1;
+      return `<li class="${now ? 'now' : 'done'}">${now ? '<i></i>' : ic('check')}<span>${esc(s)}${now ? '…' : ''}</span></li>`;
+    }).join('')}</ol>`);
+    group = [];
+  };
+  const lastProposal = r.events.map((e, i) => (e.type === 'proposal' ? i : -1)).reduce((a, b) => Math.max(a, b), -1);
+  r.events.forEach((e, i) => {
+    if (e.type === 'tool_call') { const say = AGENT_SAYS[e.name] || 'Working on it'; if (group[group.length - 1] !== say) group.push(say); return; }
+    if (['user', 'proposal', 'waiting_for_ok', 'done', 'stopped', 'error', 'text'].includes(e.type)) flush(false);
+    if (e.type === 'user') out.push(`<div class="msg-user">${esc(e.text)}</div>`);
+    else if (e.type === 'proposal') out.push(proposalHtml(e, i === lastProposal && r.status === 'waiting_user'));
+    else out.push(row(e));
+  });
+  flush(true);
+  const row0 = '';
+  return `<div class="wrap"><div class="thread"><div class="msg-user">${esc(r.text)}</div><div class="turn agent-run">${out.join('')}${row0}</div></div></div>`;
+}
+
+function row(e) {
+  const r = S.agentRun;
+  {
     if (e.type === 'text') return `<div class="agent-text">${esc(e.text)}</div>`;
     if (e.type === 'waiting_for_ok') {
       const done = S.uiDone['appr:' + e.approvalId];
@@ -305,25 +341,32 @@ function agentView() {
     }
     if (e.type === 'stopped' || e.type === 'error') return `<div class="agent-meta">${esc(e.reason)}</div>`;
     return '';
-  };
-  return `<div class="wrap"><div class="thread"><div class="msg-user">${esc(r.text)}</div><div class="turn agent-run">${stepsHtml}${r.events.map(row).join('')}</div></div></div>`;
+  }
 }
 
-async function startAgent(text) {
-  S.agentRun = { text, events: [], status: 'running' };
-  renderView();
+async function pollAgent() {
+  const run = S.agentRun;
   try {
-    const { runId } = await API.agentRun(text);
-    S.agentRun.id = runId;
-    let after = 0;
-    while (S.agentRun && S.agentRun.id === runId) {
-      const r = await API.agentEvents(runId, after);
-      S.agentRun.events.push(...r.events); after = r.next; S.agentRun.status = r.status;
+    while (S.agentRun === run) {
+      const r = await API.agentEvents(run.id, run.after || 0);
+      run.events.push(...r.events); run.after = r.next; run.status = r.status;
       renderView();
       if (r.status !== 'running') break;
     }
     refresh();
-  } catch (e) { S.agentRun.status = 'error'; S.agentRun.events.push({ type: 'error', reason: e.message }); renderView(); }
+  } catch (e) { run.status = 'error'; run.events.push({ type: 'error', reason: e.message }); renderView(); }
+}
+
+async function startAgent(text) {
+  if (S.agentRun && S.agentRun.status === 'waiting_user') {  // the chef answers the proposal
+    S.agentRun.status = 'running'; renderView();
+    try { await API.agentReply(S.agentRun.id, text); } catch (e) { toast(e.message); }
+    return pollAgent();
+  }
+  S.agentRun = { text, events: [], status: 'running', after: 0 };
+  renderView();
+  try { S.agentRun.id = (await API.agentRun(text)).runId; } catch (e) { S.agentRun.status = 'error'; S.agentRun.events.push({ type: 'error', reason: e.message }); return renderView(); }
+  return pollAgent();
 }
 
 function chatView() {
@@ -554,6 +597,8 @@ document.addEventListener('click', async (e) => {
   if (!t) return;
   const d = t.dataset;
   if ('close' in d) return closePanel();
+  if (d.agentSay) return startAgent(d.agentSay);
+  if (d.agentChange !== undefined) { const m = $('#msg'); if (m) { m.placeholder = 'What should change? e.g. now 250 guests, or no chocolate'; m.focus(); } return; }
   if (d.agentToggle !== undefined) { S.agentMode = !S.agentMode; store.set('agentMode', S.agentMode); return render(); }
   if (d.agentApprove || d.agentDecline) {  // the named approver decides with her own credential; the agent is woken by wait_for_update
     const aid = d.agentApprove || d.agentDecline; const ok = !!d.agentApprove;

@@ -71,9 +71,9 @@ rules:
     reason: "Open invoices {open} plus this order {total} exceed the credit limit {limit} for {buyer}."
   - id: V2
     side: valio_aimo
-    title: Quantity sanity cap
-    outcome: BLOCK
-    reason: "{qty} of {product} is more than {mult}x this customer's 8-week median ({median}); likely an input error."
+    title: Quantity sanity check
+    outcome: APPROVE
+    reason: "{qty} of {product} is more than {mult}x this customer's 8-week median ({median}): a named human confirms it is not a typo (any guest count is allowed)."
   - id: V3
     side: valio_aimo
     title: Agent kill switch

@@ -451,3 +451,8 @@ button.li::after, .ibtn::after, .new-chat::after, .recent button::after, .th::af
 .receipt-meta dt { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); } .receipt-meta dt svg { width: 18px; height: 18px; }
 .receipt-meta dd { margin: 0; font-weight: 600; text-align: right; }
 .receipt-note { margin: 0; padding: 0 20px 18px; color: var(--muted); font-size: 15px; }
+.proposal .receipt-h .ic { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: var(--primary-soft); color: var(--on-primary-soft); }
+.proposal .receipt-h .ic svg { width: 20px; height: 20px; }
+.receipt-note.top { padding: 0 20px; color: var(--fg); font-size: 16px; }
+.receipt .acts.pad { padding: 0 20px 18px; }
+.receipt-total small { font-weight: 400; margin-left: 6px; }

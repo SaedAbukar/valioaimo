@@ -29,13 +29,20 @@ HIDDEN = {"call_tool", "list_tools", "ask_insight", "get_insight_playbook", "sta
           "run_query", "suggest_chart", "build_chart", "explain_result", "explain_change"}
 SYSTEM = (
     "You are the purchasing agent of a professional kitchen, connected to Valio Aimo's agent gateway over MCP. "
-    "Order what the chef asks for by following the gateway's playbook: call start_session, then parse_request with the "
-    "chef's words, then only tools listed in next_allowed_tools (recall, request_offers only for gaps, plan_basket, "
-    "check_basket, render_cards). If place_order is allowed, cite exactly the offerIds from plan_basket. "
-    "If request_approval is allowed instead, call it, then call wait_for_update (timeoutSeconds 20, after = the last "
-    "'next') until an approval.decided event arrives; if approved, call place_order; if declined, stop. "
+    "Follow the gateway's playbook: call start_session once, then parse_request with the chef's words, then only tools "
+    "listed in next_allowed_tools (recall, request_offers only for gaps, plan_basket, check_basket, render_cards). "
+    "Any number of guests is fine; never refuse a request because of its size.\n"
+    "CONFIRM FIRST: after check_basket and render_cards, do NOT order yet. Stop and reply to the chef in 2-4 short "
+    "sentences: what you understood (event, guests, date, diets), the products you recommend from plan_basket (the main "
+    "ones, with amounts), the total, and whether it needs an OK and from whom. Ask them to confirm or say what to change. "
+    "Write plain text for a chef: short sentences, no markdown, no asterisks, at most three short questions.\n"
+    "When the chef confirms, act: if place_order is allowed, cite exactly the offerIds from the latest plan_basket. If "
+    "request_approval is allowed instead, call it, then call wait_for_update (timeoutSeconds 20, after = the last "
+    "'next') until an approval.decided event arrives; if approved, call place_order; if declined, stop.\n"
+    "When the chef asks for a change, call parse_request with the change in their words (for example 'now 250 guests') "
+    "or plan_basket with choices, re-check, and propose again. "
     "If a call is refused, follow its fix or next_allowed_tools. Never invent or negotiate prices. "
-    "Finish with two or three plain sentences for the chef: what was ordered, the total, delivery, and who approved.")
+    "After ordering, finish with two or three plain sentences: what was ordered, the total, delivery, who approved.")
 
 
 def key_set() -> bool:
@@ -61,6 +68,9 @@ class Run:
         self.id, self.buyer_id, self.text = new_id("RUN"), buyer_id, text
         self.events: list[dict] = []
         self.status = "running"
+        self.messages: list[dict] = [{"role": "user", "content": text}]
+        self.tools: list[dict] | None = None
+        self.ordered = False
         self.cond = threading.Condition()
 
     def emit(self, type_: str, **data):
@@ -68,6 +78,8 @@ class Run:
             self.events.append({"seq": len(self.events) + 1, "type": type_, "at": round(time.time(), 3), **data})
             if type_ in ("done", "stopped", "error"):
                 self.status = type_
+            if type_ == "proposal":
+                self.status = "waiting_user"  # the chef confirms or changes it
             self.cond.notify_all()
 
     def wait(self, after: int, timeout: float) -> list[dict]:
@@ -119,6 +131,14 @@ class ChatAgent:
         threading.Thread(target=self._safe, args=(run, token), daemon=True).start()
         return run
 
+    def reply(self, run: Run, token: str, text: str):
+        """The chef answers a proposal ('yes, order it' or a change): the same conversation continues."""
+        run.messages.append({"role": "user", "content": text})
+        run.emit("user", text=text)
+        with run.cond:
+            run.status = "running"
+        threading.Thread(target=self._safe, args=(run, token), daemon=True).start()
+
     def _safe(self, run: Run, token: str):
         try:
             self._loop(run, token)
@@ -126,10 +146,11 @@ class ChatAgent:
             run.emit("error", reason=f"The agent stopped: {type(e).__name__}.")
 
     def _loop(self, run: Run, token: str):
-        tools = [{"name": t["name"], "description": (t.get("description") or "")[:1000], "input_schema": t["inputSchema"]}
-                 for t in self._mcp(token, "tools/list", {})["tools"] if t["name"] not in HIDDEN]
-        run.emit("start", model=model(), tools=len(tools), via="MCP (Streamable HTTP) as the buyer's agent")
-        messages = [{"role": "user", "content": run.text}]
+        if run.tools is None:
+            run.tools = [{"name": t["name"], "description": (t.get("description") or "")[:1000], "input_schema": t["inputSchema"]}
+                         for t in self._mcp(token, "tools/list", {})["tools"] if t["name"] not in HIDDEN]
+            run.emit("start", model=model(), tools=len(run.tools), via="MCP (Streamable HTTP) as the buyer's agent")
+        tools, messages = run.tools, run.messages
         max_steps = int(os.environ.get("AIMO_AGENT_MAX_STEPS", 25))
         spent = 0
         for _ in range(max_steps):
@@ -143,7 +164,14 @@ class ChatAgent:
             texts = [b.text for b in resp.content if b.type == "text" and b.text.strip()]
             uses = [b for b in resp.content if b.type == "tool_use"]
             if not uses:
-                run.emit("done", answer="\n".join(texts) or "Done.")
+                answer = "\n".join(texts) or "Done."
+                if run.ordered:
+                    run.emit("done", answer=answer)
+                else:
+                    plan = next((e for e in reversed(run.events) if e["type"] == "tool_result" and e["name"] == "plan_basket" and e.get("ok")), None)
+                    chk = next((e for e in reversed(run.events) if e["type"] == "tool_result" and e["name"] == "check_basket" and e.get("ok")), None)
+                    run.emit("proposal", answer=answer, plan=plan and plan.get("plan"), decision=chk and chk.get("decision"),
+                             reasons=chk and chk.get("reasons"))
                 return
             for t in texts:
                 run.emit("text", text=t)
@@ -178,7 +206,16 @@ class ChatAgent:
         extra = {}
         if name == "start_session":
             extra["sessionId"] = d.get("sessionId")
+        if name == "plan_basket":
+            extra["plan"] = {"total": out.get("total"), "perGuest": out.get("perGuest"),
+                             "lines": [{k: l.get(k) for k in ("name", "qty", "unit", "unitPrice", "lineTotal", "deliveryDate", "why", "source")}
+                                       for l in out.get("lines", [])],
+                             "cantDo": [{"need": c.get("need"), "allergen": c.get("allergen"),
+                                         "alternative": (c.get("alternative") or {}).get("name")} for c in out.get("cantDo", [])]}
+        if name == "check_basket":
+            extra.update(decision=out.get("decision"), reasons=out.get("reasons"), approver=(out.get("approver") or {}).get("name"))
         if name == "place_order":
+            run.ordered = True
             extra.update(orderId=out.get("orderId"), total=out.get("total"), approvedBy=out.get("approvedBy"),
                          lines=[{k: l.get(k) for k in ("name", "qty", "unit", "unitPrice", "lineTotal", "deliveryDate")}
                                 for l in out.get("lines", [])],
