@@ -68,4 +68,5 @@ def test_mcp_wait_for_update_returns_session_events():
     sid = json.loads(m.start_session())["sessionId"]
     m.parse_request(sessionId=sid, text=BRIEF)
     r = json.loads(m.wait_for_update(sid, 0, 0))
-    assert [e["type"] for e in r["events"]][:2] == ["step.completed", "step.completed"] and r["next"] >= 2
+    steps = [e["data"]["tool"] for e in r["events"] if e["type"] == "step.completed"]
+    assert steps[:2] == ["start_session", "parse_request"] and r["next"] >= 2

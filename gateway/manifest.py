@@ -17,6 +17,8 @@ FREE = [  # read-only or trust tools, usable at any time (no commitment, so outs
     ("verify_offer", "POST /v1/offers/{offerId}/verify", "Six trust checks on an offer."),
     ("get_order", "GET /v1/orders/{orderId}", "An order with its signed confirmation."),
     ("get_audit_log", "GET /v1/audit", "This buyer's hash-chained audit log."),
+    ("get_suggestions", "GET /v1/suggestions", "Promotional suggestions from Valio Aimo's seller agent (signed, at most 3). Use one with plan_basket {acceptSuggestion}."),
+    ("suggestion_feedback", "POST /v1/suggestions/{suggestionId}/feedback", "Accept or dismiss a seller suggestion (dismissed: not again for 30 days)."),
     ("wait_for_update", "GET /v1/sessions/{id}/events?after=N&wait=20", "Push updates: wait for the session's next events (e.g. approval.decided) instead of polling."),
 ]
 

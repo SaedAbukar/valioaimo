@@ -218,7 +218,7 @@ schemas:
           required: [productId, qty, unit, lineTotal, deliveryDate, why, source]
           properties:
             why: {type: string, minLength: 3}
-            source: {enum: [favourites, similar_orders, learned_quantities, standing_orders, leftovers, discover]}
+            source: {enum: [favourites, similar_orders, learned_quantities, standing_orders, leftovers, discover, valio-aimo-seller]}
       total: {type: number}
       deliveryDays: {type: array}
   Decision:

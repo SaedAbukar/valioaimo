@@ -251,6 +251,13 @@ class Engine:
         ev = self.gw.events
         sid = s["sessionId"]
         ev.emit(sid, "step.completed", {"tool": tool, "step": step_id, "next_allowed_tools": nxt})
+        if tool == "start_session":  # the seller agent looks at this buyer; its open suggestions wake the new session
+            from .. import seller
+            seller.run(self.gw, s["buyerId"], notify=True)
+            for sug in seller.open_for(self.gw, s["buyerId"]):
+                if not any(e["type"] == "suggestion.created" and e["data"].get("suggestionId") == sug["suggestionId"]
+                           for e in ev.log.get(sid, [])):
+                    ev.emit(sid, "suggestion.created", seller.event_data(sug))
         if tool == "check_basket":
             ev.emit(sid, "decision.made", {"decision": out["decision"], "reasons": out["reasons"], "next_allowed_tools": nxt})
         elif tool == "request_approval":
@@ -273,7 +280,8 @@ class Engine:
         for st in pb["steps"]:
             if st["n"] >= n and st["id"] not in ("act", "learn"):
                 s["outputs"].pop(st["id"], None)
-        keep = {"choices", "alternatives", "acceptedTips", "ignoredTips", "brief", "order", "approval", "asked", "history"}
+        keep = {"choices", "alternatives", "acceptedTips", "ignoredTips", "brief", "order", "approval", "asked", "history",
+                "suggestionCands", "suggestionLines", "acceptedSuggestions"}
         if to_step == "plan":
             keep |= {"recall", "candidates", "menu"}
         for k in list(s["data"]):

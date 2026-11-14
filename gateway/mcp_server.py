@@ -32,6 +32,8 @@ from . import auth, discovery, lookup, manifest, mcp_tools, trust  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
 from .policy import published_rules  # noqa: E402
 from .ratelimit import RateLimiter  # noqa: E402
+from . import seller  # noqa: E402
+from .playbook.engine import validate_input  # noqa: E402
 
 GW = Gateway(live=os.environ.get("AIMO_LIVE", "1") == "1")
 ME = auth.resolve(GW, "Bearer " + os.environ.get("AIMO_AGENT_TOKEN", "demo-key-pohjola"))
@@ -141,6 +143,30 @@ def get_order(orderId: str) -> str:
 def get_audit_log(sessionId: str | None = None) -> str:
     """This buyer's hash-chained audit log (optionally one session) and whether the chain verifies."""
     return _dump({"verify": GW.audit.verify(), "events": GW.audit.events(trace_id=sessionId, buyer_id=ME.buyer_id, limit=300)})
+
+
+@mcp.tool()
+def get_suggestions() -> str:
+    """Promotional suggestions from Valio Aimo's seller agent for this buyer (at most 3, signed as suggestion+jwt,
+    issuer 'Valio Aimo seller agent'). Never added to an order: to use one, plan_basket(acceptSuggestion=...)."""
+    return _dump(seller.for_buyer(GW, ME.buyer_id))
+
+
+@mcp.tool()
+def suggestion_feedback(suggestionId: str, decision: str, reason: str | None = None, idempotencyKey: str | None = None) -> str:
+    """Tell the seller agent what you did with a suggestion: decision 'accepted' or 'dismissed' (not suggested again
+    for 30 days), with an optional reason. Audited."""
+    s = seller.get(GW, suggestionId)
+    if not s or s["buyerId"] != ME.buyer_id:
+        return _dump({"status": 404, "error": "not_found", "fix": {"call": "get_suggestions"}})
+    args = {"decision": decision, **({"reason": reason} if reason else {})}
+    try:
+        validate_input(seller.FEEDBACK_SCHEMA, "suggestion_feedback", args)
+        out, replayed = GW.engine.idempotent(f"{suggestionId}|feedback", idempotencyKey, args, lambda: seller.feedback(
+            GW, ME.buyer_id, suggestionId, decision, reason, actor=ME.label))
+    except PlaybookError as e:
+        return _dump({"status": e.status, **e.body()})
+    return _dump({**out, "idempotentReplay": True} if replayed else out)
 
 
 @mcp.tool()

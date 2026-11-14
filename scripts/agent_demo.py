@@ -3,6 +3,7 @@
     make run                                   # gateway on :8000 (live mock API if .env has the key)
     python scripts/agent_demo.py               # the brief's milk request -> order (within authority)
     python scripts/agent_demo.py --over-limit  # 3,000 L -> needs OK -> Laura approves -> order
+    python scripts/agent_demo.py --suggestions # pull Valio Aimo's seller suggestions, verify each signature
 
 It does what any agent would: read the discovery documents, look up products,
 then follow the playbook by obeying `next_allowed_tools`, cite the signed offers
@@ -158,6 +159,29 @@ def run(base: str, token: str, text: str, approver: str | None) -> dict:
     return {"order": order, "seconds": secs, "sessionId": sid}
 
 
+def suggestions(base: str, token: str) -> int:
+    """The buyer's agent pulls the seller agent's suggestions and checks each one is signed by the gateway and promotional."""
+    gw = Gateway(base, token)
+    _, jwks = gw.call("GET", "/.well-known/jwks.json")
+    st, r = gw.call("GET", "/v1/suggestions")
+    if st != 200:
+        say("suggestions", f"HTTP {st}: {r}")
+        return 1
+    if r["optedOut"]:
+        say("suggestions", "this buyer opted out of seller suggestions")
+        return 0
+    for sg in r["suggestions"]:
+        ok = verify_es256(sg["proof"]["jws"], jwks)
+        typ = json.loads(_b64(sg["proof"]["jws"].split(".")[0]))["typ"]
+        say(sg["type"], f"{sg['name']} · €{sg['price']['perUnit']:.2f}/{sg['price']['unit']} ({sg['price']['source']})")
+        say("", f"why: {sg['reason']}")
+        say("", f"trade-off: {sg['tradeOff']}")
+        say("", f"{typ} from '{sg['issuer']}', promotional={sg['promotional']}, signature {'valid' if ok else 'INVALID'}, "
+                f"valid until {sg['validUntil']}")
+    say("use", "nothing was added to any order; to use one: plan_basket {acceptSuggestion: <id>} (re-planned and re-checked)")
+    return 0 if all(verify_es256(x["proof"]["jws"], jwks) for x in r["suggestions"]) else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", default="http://127.0.0.1:8000")
@@ -165,7 +189,10 @@ def main():
     ap.add_argument("--approver", default="demo-human-usr-lvirtanen", help="the named approver's credential")
     ap.add_argument("--over-limit", action="store_true", help="order 3,000 L so a human must approve")
     ap.add_argument("--text", help="your own request")
+    ap.add_argument("--suggestions", action="store_true", help="pull and verify Valio Aimo seller suggestions")
     a = ap.parse_args()
+    if a.suggestions:
+        sys.exit(suggestions(a.base, a.token))
     res = run(a.base, a.token, a.text or (OVER if a.over_limit else BRIEF), a.approver)
     sys.exit(0 if res["order"] and res["seconds"] < 60 else 1)
 

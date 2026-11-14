@@ -35,6 +35,8 @@ from .playbook.agent import ChefAssistant  # noqa: E402
 from .playbook.engine import PlaybookError, public_playbook  # noqa: E402
 from . import manifest, discovery, lookup, auth  # noqa: E402
 from .ratelimit import RateLimiter  # noqa: E402
+from . import seller  # noqa: E402
+from .playbook.engine import NotFound, validate_input  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
 from .playbook.tools import decide_approval  # noqa: E402
 from .analytics import engine as insight_engine, views  # noqa: E402
@@ -155,6 +157,30 @@ def make_app(live: bool = True) -> Starlette:
         evs = await anyio.to_thread.run_sync(gw().events.wait, s["sessionId"], after, wait)
         return JSONResponse({"sessionId": s["sessionId"], "events": evs, "next": evs[-1]["seq"] if evs else after,
                              "next_allowed_tools": gw().engine.allowed(s)})
+
+    # ---------------------------------------------------------------- proactive seller (Valio Aimo's own agent)
+    @guarded
+    async def suggestions(req: Request):
+        c = caller(req, "agent")
+        bid = req.query_params.get("buyerId") or c.buyer_id
+        auth.same_buyer(c, bid)
+        return JSONResponse(seller.for_buyer(gw(), bid))
+
+    @guarded
+    async def suggestion_feedback(req: Request):
+        c = caller(req, "agent")
+        sid = req.path_params["sgid"]
+        s = seller.get(gw(), sid)
+        if not s:
+            raise NotFound(f"No suggestion {sid}.", fix={"call": "GET /v1/suggestions"})
+        auth.same_buyer(c, s["buyerId"])
+        b = await body(req)
+        key = req.headers.get("idempotency-key") or b.get("idempotencyKey")
+        validate_input(seller.FEEDBACK_SCHEMA, "suggestion_feedback", b)
+        b.pop("idempotencyKey", None)
+        out, replayed = gw().engine.idempotent(f"{sid}|feedback", key, b, lambda: seller.feedback(
+            gw(), c.buyer_id, sid, b["decision"], b.get("reason"), actor=c.label))
+        return replay({**out, "idempotentReplay": True} if replayed else out)
 
     @guarded
     async def session_log(req: Request):
@@ -421,6 +447,7 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/products/search", product_search, methods=["POST"]),
         Route("/v1/products/price-availability", price_availability, methods=["POST"]),
         Route("/v1/products/{pid}", product_get), Route("/v1/mandate", mandate_ep),
+        Route("/v1/suggestions", suggestions), Route("/v1/suggestions/{sgid}/feedback", suggestion_feedback, methods=["POST"]),
         Route("/v1/sessions/{sid}/log", session_log), Route("/v1/sessions/{sid}/events", session_events),
         Route("/v1/offers/{oid}", offer_get), Route("/v1/offers/{oid}/verify", offer_verify, methods=["POST"]),
         Route("/v1/orders/{oid}", order_get), Route("/v1/approvals", approval_inbox),

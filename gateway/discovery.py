@@ -29,6 +29,9 @@ def ucp_profile(base: str) -> dict:
                 {"name": "dev.ucp.shopping.order", "spec": "GET /v1/orders/{orderId}: signed order confirmation"},
                 {"name": "com.valioaimo.approval", "spec": "request_approval -> named human -> POST /v1/approvals/{approvalId}"},
                 {"name": "com.valioaimo.playbook", "spec": "GET /v1/playbook (enforced order of steps)"},
+                {"name": "com.valioaimo.suggestions", "spec": "GET /v1/suggestions: promotional, signed (suggestion+jwt) suggestions "
+                                                              "from Valio Aimo's seller agent; use one with plan_basket {acceptSuggestion}; "
+                                                              "events: suggestion.created"},
             ]},
         "business": {"name": "Valio Aimo", "country": "FI", "currency": "EUR", "pricing": "fixed list and customer prices, no negotiation",
                      "payment": "invoice on the customer account (no card or crypto payment)"},
@@ -62,6 +65,10 @@ def agent_card(base: str) -> dict:
              "examples": ["I need 1,000 litres of lactose-free milk by Monday."]},
             {"id": "approval", "name": "Human approval", "tags": ["approval", "guardrails"],
              "description": "Orders outside the agent's authority go to a named approver; the decision is signed into the log."},
+            {"id": "proactive-offers", "name": "Proactive offers from Valio Aimo's seller agent", "tags": ["suggestions", "seasonal", "promotional"],
+             "description": "At most 3 signed, clearly promotional suggestions per buyer (seasonal, new but similar, better on the "
+                            "buyer's own criteria), within the buyer's mandate. Never added to a basket; accepting re-plans and re-checks.",
+             "examples": ["GET /v1/suggestions", "plan_basket {acceptSuggestion: SUG-…}"]},
         ],
     }
 
@@ -76,6 +83,7 @@ def _json(schema: dict, desc: str = "OK") -> dict:
 
 ERRORS = {"401": _json(_ref("Error"), "No or unknown credential"), "403": _json(_ref("Error"), "Credential not allowed here"),
           "409": _json(_ref("Error"), "step_not_allowed: out of order, see next_allowed_tools"),
+          "404": _json(_ref("Error"), "not_found: see fix"),
           "422": _json(_ref("Error"), "guard_failed: bad input, see fix"),
           "429": {**_json(_ref("Error"), "rate_limited: wait retryAfter seconds (per credential; operations exempt)"),
                   "headers": {"Retry-After": {"schema": {"type": "integer"}, "description": "Seconds (RFC 9110)"}}}}
@@ -152,6 +160,11 @@ SCHEMAS = {
 }
 
 
+def _feedback_schema() -> dict:
+    from .seller import FEEDBACK_SCHEMA
+    return FEEDBACK_SCHEMA
+
+
 def _tool_inputs() -> dict:
     """Component schemas Input_<tool> from the playbook (1.1.0), one per order tool."""
     out = {}
@@ -194,6 +207,11 @@ def openapi(base: str = "") -> dict:
                                                            "next_allowed_tools": {"type": "array", "items": {"type": "string"}}}}),
                                                        params=[_p("sessionId"), _p("after", "query", "last seq seen (cursor); default 0"),
                                                                _p("wait", "query", "seconds to wait for a new event, 0-25")], errors=("401", "403", "422"))},
+        "/v1/suggestions": {"get": _op("Promotional suggestions from Valio Aimo's seller agent (own buyer, at most 3, signed suggestion+jwt)",
+                                       "Suggestions", _json({"type": "object"}), params=[_p("buyerId", "query", "defaults to the credential's buyer")])},
+        "/v1/suggestions/{suggestionId}/feedback": {"post": _op("Accept or dismiss a seller suggestion (audited; dismissed: not again for 30 days)",
+                                                                "Suggestions", _json({"type": "object"}), _ref("SuggestionFeedback"),
+                                                                [_p("suggestionId"), IDEMPOTENCY_KEY], errors=("401", "403", "404", "422"))},
         "/v1/sessions/{sessionId}/log": {"get": _op("Plain-language log of what the agent did and why", "Audit", _json({"type": "object"}), params=[_p("sessionId")])},
         "/v1/offers/{offerId}": {"get": _op("A signed offer (vc+jwt)", "Offers", _json(_ref("Offer")), params=[_p("offerId")])},
         "/v1/offers/{offerId}/verify": {"post": _op("Six trust checks on an offer: signature, validity, freshness, binding, status, live re-check",
@@ -215,9 +233,9 @@ def openapi(base: str = "") -> dict:
                                 "mandate, human approval, audit. The playbook decides the order of calls; the gateway decides outcomes."},
         "servers": [{"url": base or "/"}],
         "security": [{"bearer": []}],
-        "tags": [{"name": n} for n in ("Discovery", "Lookup", "Playbook", "Offers", "Orders", "Approvals", "Rules", "Trust", "Audit", "Operations")],
+        "tags": [{"name": n} for n in ("Discovery", "Lookup", "Playbook", "Offers", "Orders", "Approvals", "Rules", "Trust", "Audit", "Operations", "Suggestions")],
         "paths": paths,
         "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer",
                                                       "description": "Agent, approver or operations credential, bound to one customer account"}},
-                       "schemas": {**SCHEMAS, **inputs}},
+                       "schemas": {**SCHEMAS, **inputs, "SuggestionFeedback": _feedback_schema()}},
     }

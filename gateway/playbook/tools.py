@@ -276,6 +276,8 @@ def plan_basket(gw, s: dict, args: dict) -> dict:
         d["ignoredTips"].append(args["ignoreTip"])
     if "recall" not in d:
         raise StepNotAllowed("Recall must run before planning.", next_allowed_tools=["recall"])
+    if args.get("acceptSuggestion"):
+        _accept_suggestion(gw, s, args["acceptSuggestion"])
     if getattr(gw, "aimo", None):  # live mode: recalled favourites are priced on the mock API too
         discover.refresh_curated(gw, _need_by(gw, s))
     b = d["brief"]
@@ -288,6 +290,8 @@ def plan_basket(gw, s: dict, args: dict) -> dict:
     ctx = {"buyer": buyer, "mandate": mandate, "profile": gw.profiles[bid], "signals": sig.compute(buyer, gw.records),
            "backend": gw.backend, "today": gw.clock.today(), "leftovers": leftovers}
     reqs = d["menu"]["lines"] if is_event else [dict(l, needBy=b["when"]["value"]) for l in b["lines"]]
+    reqs = reqs + [dict(x, needBy=d2s(_need_by(gw, s))) for x in d.get("suggestionLines", [])]  # added from a seller suggestion
+    sug_cands = d.get("suggestionCands", {})
     live_cands = {g["need"]: g["liveCandidates"] for g in (d.get("candidates") or {}).get("gaps", []) if g.get("liveCandidates")}
     srcmap = {m["need"]: m for m in d["recall"]["matched"] if m["source"] in ("favourites", "similar_orders")}
     learned = {m["need"]: m for m in d["recall"]["matched"] if m["source"] == "learned_quantities"}
@@ -299,6 +303,8 @@ def plan_basket(gw, s: dict, args: dict) -> dict:
              "useLeftovers": req.get("useLeftovers", False), "excludeAllergens": req.get("excludeAllergens", [])}
         if need in live_cands:
             r["candidates"] = live_cands[need]
+        if req.get("candidates") or req["lineId"] in sug_cands:  # a seller suggestion the agent accepted
+            r["candidates"] = req.get("candidates") or sug_cands[req["lineId"]]["gtins"]
         nb = s2d(req["needBy"])
         choice = d["choices"].get(req["lineId"])
         pl = planner.plan_line(ctx, r, nb, choice, usage)
@@ -352,6 +358,9 @@ def plan_basket(gw, s: dict, args: dict) -> dict:
                 adjustments.append({"need": need, **adj})
             p = catalog.by_gtin(l["gtin"])
             why = _why(need, l, src, m, req, learned.get(need), pl)
+            sug = req.get("suggestion") or (sug_cands.get(req["lineId"]) or {}).get("suggestion")
+            if sug and l["gtin"] in (req.get("candidates") or sug_cands.get(req["lineId"], {}).get("gtins", [])):
+                src, why = "valio-aimo-seller", f"Suggested by Valio Aimo: {sug['reason']}"
             lines.append({**l, "productId": l["gtin"], "need": need, "label": req.get("label", need), "why": why, "source": src,
                           "nameFi": p.get("nameFi"), "salesUnit": p.get("salesUnit"), "live": p.get("livePrice", False),
                           "aimoProductId": p.get("aimoProductId")})
@@ -371,6 +380,47 @@ def plan_basket(gw, s: dict, args: dict) -> dict:
                      for g in dict.fromkeys(l["gtin"] for l in lines)]
     d["plan"] = out
     return out
+
+
+def _accept_suggestion(gw, s: dict, sug_id: str):
+    """Use a seller suggestion through the normal rails: the product is bridged, the basket is re-planned and
+    must pass check_basket again (signed offers, mandate, approval rules). Never an order by itself."""
+    from .. import aimo_products, lookup, seller
+    from .engine import NotFound
+    d, bid = s["data"], s["buyerId"]
+    sug = seller.get(gw, sug_id)
+    if not sug or sug["buyerId"] != bid:
+        raise NotFound(f"No suggestion {sug_id} for this customer.", fix={"call": "get_suggestions", "rest": "GET /v1/suggestions"})
+    if sug_id in d.get("acceptedSuggestions", []):
+        return
+    if sug["status"] not in ("open", "accepted") or sug["validUntil"] < iso(gw.clock.now()) or seller.opted_out(gw, bid):
+        raise GuardFailed(f"The suggestion {sug_id} is {sug['status']} and can no longer be used.", guard="suggestion_closed",
+                          fix={"call": "get_suggestions"})
+    nb = _need_by(gw, s)
+    rec = aimo_products.by_id(sug["productId"])
+    prices, avail = lookup._live(gw, [rec["id"]], nb)
+    kind = sug["replaces"]["need"] if sug["action"] == "replace" else None
+    live = {"price": prices.get(rec["id"]), "availability": avail.get(rec["id"])} if (prices or avail) else None
+    p = discover.bridge(gw, rec, kind or "other", nb, live)
+    p["category"] = sug["category"]
+    if sug["action"] == "replace":
+        lines = d["menu"]["lines"] if d["brief"].get("event") else d["brief"]["lines"]
+        hit = next((l for l in lines if catalog.resolve_need(l["text"])["kind"] == kind), None)
+        if not hit:
+            raise GuardFailed(f"This suggestion replaces {sug['replaces']['productName']}, which is not in this order.",
+                              guard="suggestion_not_applicable", fix={"hint": "accept it in a session that orders that product"})
+        d.setdefault("suggestionCands", {})[hit["lineId"]] = {"gtins": [p["gtin"]], "suggestion": {"id": sug_id, "reason": sug["reason"]}}
+        d["choices"][hit["lineId"]] = p["gtin"]
+    else:
+        n = len(d.get("suggestionLines", [])) + 1
+        qty = sug["suggestedQty"]["qty"] if sug["suggestedQty"]["unit"] == p["unit"] else p["packSize"]
+        d.setdefault("suggestionLines", []).append({"lineId": f"S{n}", "text": p["name"], "need": p["name"], "qty": qty,
+                                                    "unit": p["unit"], "candidates": [p["gtin"]],
+                                                    "suggestion": {"id": sug_id, "reason": sug["reason"]}})
+    d.setdefault("acceptedSuggestions", []).append(sug_id)
+    if sug["status"] == "open":
+        seller.feedback(gw, bid, sug_id, "accepted", "added through plan_basket; re-planned and re-checked",
+                        actor=f"agent:{s['agentId'].split(':')[-1]}", trace_id=s["sessionId"])
 
 
 def _option(i: dict, opts: list[dict], gw) -> dict:
