@@ -92,3 +92,10 @@ def test_audit_verify_is_incremental():
     gw.audit.append(trace_id=None, actor="system:test", action="x")
     v2 = gw.audit.verify()
     assert v2["ok"] and v2["newlyChecked"] == 1 and v2["checked"] == full["checked"] + 1 and v1["ok"]
+
+
+def test_long_poll_slots_leave_worker_threads_for_other_calls():
+    import anyio
+    with TestClient(make_app(live=False)) as c:
+        tokens = c.portal.call(lambda: anyio.to_thread.current_default_thread_limiter().total_tokens)
+        assert c.app.state.gw().events.max_waiters + 32 <= tokens

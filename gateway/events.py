@@ -29,7 +29,7 @@ class Events:
         self.log: dict[str, list[dict]] = {}
         self.conds: dict[str, threading.Condition] = {}  # one per session: an emit wakes only that session's waiters
         self.guard = threading.Lock()
-        self.max_waiters = int(os.environ.get("AIMO_MAX_WAITERS", 64))
+        self.max_waiters = int(os.environ.get("AIMO_MAX_WAITERS", 32))
         self.waiting = 0
         self.last_seq: dict[str, int] = {}  # seq keeps counting after old events are evicted
 

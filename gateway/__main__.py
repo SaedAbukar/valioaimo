@@ -521,6 +521,8 @@ def make_app(live: bool = True) -> Starlette:
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
+        # worker threads: every long-poll slot plus room for normal calls (engine, lookup, adapter)
+        anyio.to_thread.current_default_thread_limiter().total_tokens = gw().events.max_waiters + 64
         async with mcp_srv.session_manager.run():
             yield
 
