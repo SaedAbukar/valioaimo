@@ -204,7 +204,9 @@ class AimoApiClient:
 
     def _batch(self, path: str, ids: list[str], requested: str) -> dict[str, dict]:
         out, todo = {}, []
-        now = time.time()
+        now = self.now()
+        for k in [k for k, (t, _) in self._cache.items() if now - t >= self.TTL]:
+            del self._cache[k]  # evict expired rows
         for i in dict.fromkeys(ids):
             hit = self._cache.get((path, i, requested))
             if hit and now - hit[0] < self.TTL:

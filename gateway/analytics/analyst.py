@@ -67,6 +67,18 @@ def _period(text: str) -> str | None:
     return None
 
 
+ASK_FILTERS = {  # page filters for ask / ask_insight: always applied, and they win over guesses
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "site": {"type": "string", "description": "kitchen name, e.g. Pohjola Tampere"},
+        "siteId": {"type": ["string", "null"], "description": "kitchen id"},
+        "category": {"type": "string", "description": "product category, e.g. dairy"},
+        "event_type": {"type": "string", "description": "event type, e.g. gala_dinner"},
+        "period": {"description": "{from, to} or last_month | last_3_months | last_6_months | last_30_days | this_year",
+                   "anyOf": [{"type": "string"}, {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}}}]}},
+    "examples": [{"site": "Pohjola Tampere", "period": "last_3_months"}]}
+
+
 class Analyst:
     def __init__(self, gw):
         self.gw = gw

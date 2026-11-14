@@ -53,6 +53,7 @@ class AuditLedger:
     def __init__(self, store, clock):
         self.store = store
         self.clock = clock
+        self._verified = (0, GENESIS)  # (seq, hash) of the verified prefix
 
     def _last_hash(self) -> str:
         row = self.store.db.execute("SELECT hash FROM audit ORDER BY seq DESC LIMIT 1").fetchone()
@@ -102,11 +103,17 @@ class AuditLedger:
             rows = self.store.db.execute(q, args).fetchall()
         return [json.loads(r[0]) for r in reversed(rows)]
 
-    def verify(self) -> dict:
-        prev = GENESIS
-        n = 0
+    def verify(self, full: bool = False) -> dict:
+        """Check the hash chain. Incremental by default: only events after the last verified one are hashed, and the
+        last verified event is re-read to make sure it still links. full=True re-checks every event from genesis."""
+        start, prev = (0, GENESIS) if full else self._verified
         with self.store.lock:
-            rows = self.store.db.execute("SELECT seq, json, hash FROM audit ORDER BY seq").fetchall()
+            if start:
+                row = self.store.db.execute("SELECT hash FROM audit WHERE seq=?", (start,)).fetchone()
+                if not row or row[0] != prev:
+                    start, prev = 0, GENESIS
+            rows = self.store.db.execute("SELECT seq, json, hash FROM audit WHERE seq > ? ORDER BY seq", (start,)).fetchall()
+        n = start
         for seq, js, stored_hash in rows:
             n += 1
             ev = json.loads(js)
@@ -115,7 +122,8 @@ class AuditLedger:
             if event_hash(ev) != stored_hash or ev.get("hash") != stored_hash:
                 return {"ok": False, "checked": n, "brokenAt": seq, "detail": f"event {seq}: content does not match its SHA-256 hash (edited after write)"}
             prev = stored_hash
-        return {"ok": True, "checked": n, "brokenAt": None, "head": prev, "detail": f"{n} events, chain intact"}
+        self._verified = (n, prev)
+        return {"ok": True, "checked": n, "newlyChecked": n - start, "brokenAt": None, "head": prev, "detail": f"{n} events, chain intact"}
 
     def tamper(self, seq: int | None = None) -> dict:
         """DEMO ONLY: silently edit a stored row to show tamper evidence."""
@@ -134,6 +142,7 @@ class AuditLedger:
             ev["reason"] = (ev.get("reason") or "") + " [edited]"
             self.store.db.execute("UPDATE audit SET json=? WHERE seq=?", (json.dumps(ev, ensure_ascii=False), row[0]))
             self.store.db.commit()
+        self._verified = (0, GENESIS)
         return {"ok": True, "seq": row[0], "changed": {"decision": [original, "AUTO"]}}
 
 

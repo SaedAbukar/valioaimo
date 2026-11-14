@@ -142,7 +142,10 @@ class Engine:
                                       fix={"idempotencyKey": "use a new key for a new request, or resend the original body"})
                 return copy.deepcopy(hit["response"]), True
             out = fn()
-            self.idem[k] = {"hash": h, "response": copy.deepcopy(out), "at": iso(self.gw.clock.now())}
+            now = self.gw.clock.now()
+            for old in [x for x, v in self.idem.items() if now - parse_dt(v["at"]) >= IDEMPOTENCY_TTL]:
+                del self.idem[old]  # evict expired keys
+            self.idem[k] = {"hash": h, "response": copy.deepcopy(out), "at": iso(now)}
             return out, False
 
     # ------------------------------------------------------------------ rules

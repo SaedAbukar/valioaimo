@@ -38,12 +38,13 @@ from .playbook.engine import PlaybookError, public_playbook  # noqa: E402
 from . import manifest, discovery, lookup, auth  # noqa: E402
 from .ratelimit import RateLimiter  # noqa: E402
 from .observability import RequestLog, audit_rejection  # noqa: E402
+from .events import Busy  # noqa: E402
 from . import seller  # noqa: E402
 from .playbook.engine import NotFound, validate_input  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
 from .playbook.tools import decide_approval  # noqa: E402
 from .analytics import engine as insight_engine, views  # noqa: E402
-from .analytics.analyst import Analyst  # noqa: E402
+from .analytics.analyst import ASK_FILTERS, Analyst  # noqa: E402
 
 
 DEMO_GALA = ("Gala dinner for 180 on Saturday 21.11.: salmon starter, beef tenderloin, chocolate mousse. "
@@ -183,7 +184,12 @@ def make_app(live: bool = True) -> Starlette:
         except ValueError:
             return JSONResponse({"error": "guard_failed", "guard": "bad_input", "message": "after is an integer, wait is 0-25 seconds.",
                                  "fix": {"example": "?after=0&wait=20"}}, status_code=422)
-        evs = await anyio.to_thread.run_sync(gw().events.wait, s["sessionId"], after, wait)
+        try:
+            evs = await anyio.to_thread.run_sync(gw().events.wait, s["sessionId"], after, wait)
+        except Busy:
+            return JSONResponse({"error": "busy", "message": "All long-poll slots are taken. Retry shortly.",
+                                 "fix": {"retryAfterSeconds": 2, "or": "call again with wait=0"}},
+                                status_code=503, headers={"Retry-After": "2"})
         return JSONResponse({"sessionId": s["sessionId"], "events": evs, "next": evs[-1]["seq"] if evs else after,
                              "next_allowed_tools": gw().engine.allowed(s)})
 
@@ -223,8 +229,7 @@ def make_app(live: bool = True) -> Starlette:
     async def product_search(req: Request):
         caller(req, "agent", "ops")
         b = await body(req)
-        if not str(b.get("query", "")).strip():
-            return JSONResponse({"error": "guard_failed", "message": "query is required", "fix": {"query": "lactose-free milk"}}, status_code=422)
+        validate_input(discovery.SCHEMAS["ProductSearch"], "product_search", b)
         return JSONResponse(await off_loop(lookup.search, gw(), b["query"], b.get("qty"), b.get("needBy"), b.get("excludeAllergens"),
                                           b.get("diet"), b.get("limit", 8)))
 
@@ -232,8 +237,7 @@ def make_app(live: bool = True) -> Starlette:
     async def price_availability(req: Request):
         caller(req, "agent", "ops")
         b = await body(req)
-        if not b.get("productIds"):
-            return JSONResponse({"error": "guard_failed", "message": "productIds is required", "fix": {"productIds": ["465039"]}}, status_code=422)
+        validate_input(discovery.SCHEMAS["PriceAvailabilityRequest"], "price_availability", b)
         return JSONResponse(await off_loop(lookup.price_availability, gw(), b["productIds"], b.get("needBy"), b.get("qty")))
 
     @guarded
@@ -472,6 +476,7 @@ def make_app(live: bool = True) -> Starlette:
     async def ask(req: Request):
         b = await body(req)
         _, bid = buyer_of(req, bid=b.get("buyerId"))
+        validate_input(ASK_FILTERS, "ask", b.get("filters") or {})
         return JSONResponse(await off_loop(state["analyst"].ask, b.get("prompt", ""), b.get("filters") or {}, bid, b.get("siteId")))
 
     @guarded

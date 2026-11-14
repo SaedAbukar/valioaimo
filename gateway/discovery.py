@@ -116,13 +116,18 @@ SCHEMAS = {
     "Error": {"type": "object", "required": ["error"], "properties": {
         "error": {"type": "string"}, "message": {"type": "string"}, "guard": {"type": "string"},
         "next_allowed_tools": {"type": "array", "items": {"type": "string"}}, "fix": {}}},
-    "ProductSearch": {"type": "object", "required": ["query"], "properties": {
-        "query": {"type": "string", "examples": ["lactose-free milk"]}, "qty": {"type": "number", "description": "kg, L or pieces"},
-        "needBy": {"type": "string", "format": "date"}, "excludeAllergens": {"type": "array", "items": {"type": "string"}},
-        "diet": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}},
-    "PriceAvailabilityRequest": {"type": "object", "required": ["productIds"], "properties": {
-        "productIds": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
-        "needBy": {"type": "string", "format": "date"}, "qty": {"type": "number"}}},
+    "ProductSearch": {"type": "object", "required": ["query"], "additionalProperties": False, "properties": {
+        "query": {"type": "string", "minLength": 1, "description": "What to look for, e.g. lactose-free milk"},
+        "qty": {"type": "number", "minimum": 0, "description": "kg, L or pieces"},
+        "needBy": {"type": "string", "format": "date", "description": "YYYY-MM-DD"},
+        "excludeAllergens": {"type": "array", "items": {"type": "string"}, "description": "allergens the product must not contain"},
+        "diet": {"type": "array", "items": {"type": "string"}, "description": "diet claims the product must have"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "description": "how many results (default 8)"}},
+        "examples": [{"query": "lactose-free milk", "qty": 1000, "needBy": "2026-11-16", "limit": 5}]},
+    "PriceAvailabilityRequest": {"type": "object", "required": ["productIds"], "additionalProperties": False, "properties": {
+        "productIds": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 20, "description": "Valio Aimo product ids"},
+        "needBy": {"type": "string", "format": "date", "description": "YYYY-MM-DD"}, "qty": {"type": "number", "minimum": 0, "description": "kg, L or pieces"}},
+        "examples": [{"productIds": ["465039"], "needBy": "2026-11-16", "qty": 1000}]},
     "Product": {"type": "object", "required": ["productId", "name", "price", "availability"], "properties": {
         "productId": {"type": "string"}, "gtin": {"type": ["string", "null"]}, "name": {"type": "string"}, "brand": {"type": ["string", "null"]},
         "content": {"type": "object", "properties": {"perSalesUnit": {"type": "number"}, "unit": {"enum": ["L", "kg", "pcs"]}}},

@@ -8,6 +8,7 @@ and suggestion.created. Outbound webhooks are out of scope for the prototype (do
 """
 from __future__ import annotations
 
+import os
 import threading
 from datetime import timedelta
 
@@ -15,21 +16,41 @@ from .util import iso, parse_dt
 
 MAX_WAIT = 25
 EXPIRING_BEFORE = timedelta(minutes=2)
+KEEP = timedelta(hours=24)  # events older than this are dropped
+
+
+class Busy(Exception):
+    """Every long-poll slot is taken: answer 503 with Retry-After."""
 
 
 class Events:
     def __init__(self, gw):
         self.gw = gw
         self.log: dict[str, list[dict]] = {}
-        self.cond = threading.Condition()
+        self.conds: dict[str, threading.Condition] = {}  # one per session: an emit wakes only that session's waiters
+        self.guard = threading.Lock()
+        self.max_waiters = int(os.environ.get("AIMO_MAX_WAITERS", 64))
+        self.waiting = 0
+        self.last_seq: dict[str, int] = {}  # seq keeps counting after old events are evicted
+
+    def cond_for(self, session_id: str) -> threading.Condition:
+        with self.guard:
+            return self.conds.setdefault(session_id, threading.Condition())
 
     def emit(self, session_id: str, type_: str, data: dict | None = None) -> dict:
-        with self.cond:
+        cond = self.cond_for(session_id)
+        with cond:
             evs = self.log.setdefault(session_id, [])
-            e = {"seq": len(evs) + 1, "type": type_, "at": iso(self.gw.clock.now()), "sessionId": session_id, "data": data or {}}
+            now = self.gw.clock.now()
+            evs[:] = [e for e in evs if now - parse_dt(e["at"]) < KEEP]  # evict old events; seq keeps counting
+            e = {"seq": self._last(session_id, evs) + 1, "type": type_, "at": iso(now), "sessionId": session_id, "data": data or {}}
             evs.append(e)
-            self.cond.notify_all()
+            self.last_seq[session_id] = e["seq"]
+            cond.notify_all()
             return e
+
+    def _last(self, session_id: str, evs: list[dict]) -> int:
+        return max(self.last_seq.get(session_id, 0), evs[-1]["seq"] if evs else 0)
 
     def emit_buyer(self, buyer_id: str, type_: str, data: dict) -> int:
         """Emit to every open session of a buyer (e.g. a seller suggestion). Returns how many sessions were told."""
@@ -55,17 +76,26 @@ class Events:
                                                          "next_allowed_tools": ["plan_basket"]})
 
     def read(self, session_id: str, after: int = 0) -> list[dict]:
-        with self.cond:
+        with self.cond_for(session_id):
             self._expiring(session_id)
             return [e for e in self.log.get(session_id, []) if e["seq"] > after]
 
     def wait(self, session_id: str, after: int = 0, timeout: float = 0) -> list[dict]:
-        """Block up to timeout seconds (max 25) until an event after `after` exists."""
+        """Block up to timeout seconds (max 25) until an event after `after` exists. Raises Busy when all
+        long-poll slots (AIMO_MAX_WAITERS, default 64) are taken; timeout 0 never takes a slot."""
         timeout = max(0.0, min(float(timeout), MAX_WAIT))
-        with self.cond:
+        if timeout <= 0:
+            return self.read(session_id, after)
+        with self.guard:
+            if self.waiting >= self.max_waiters:
+                raise Busy()
+            self.waiting += 1
+        try:
             self._expiring(session_id)
-            self.cond.wait_for(lambda: len(self.log.get(session_id, [])) > after, timeout=timeout)
-            return [e for e in self.log.get(session_id, []) if e["seq"] > after]
-
-    def cursor(self, session_id: str) -> int:
-        return len(self.log.get(session_id, []))
+            cond = self.cond_for(session_id)
+            with cond:
+                cond.wait_for(lambda: any(e["seq"] > after for e in self.log.get(session_id, [])), timeout=timeout)
+                return [e for e in self.log.get(session_id, []) if e["seq"] > after]
+        finally:
+            with self.guard:
+                self.waiting -= 1

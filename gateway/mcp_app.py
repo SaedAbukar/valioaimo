@@ -23,10 +23,12 @@ except ImportError:  # mcp 1.x
     from mcp.server.fastmcp import FastMCP
 
 from . import auth, discovery, lookup, manifest, mcp_tools, seller, trust
+from .analytics.analyst import ASK_FILTERS
 from .analytics.engine import insight_playbook, public as insight_public
 from .crypto import verify_jws
 from .playbook.engine import PlaybookError, playbook, public_playbook, validate_input
 from .policy import published_rules
+from .events import Busy
 from .observability import audit_rejection
 from .ratelimit import RateLimiter
 
@@ -187,7 +189,10 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
             return _dump({"status": e.status, **e.body()})
         if s["buyerId"] != me.buyer_id or s["agentId"] != me.agent_id:
             return _dump({"status": 403, "error": "forbidden", "message": "This session belongs to another agent."})
-        evs = G().events.wait(sessionId, after, timeoutSeconds)
+        try:
+            evs = G().events.wait(sessionId, after, timeoutSeconds)
+        except Busy:
+            return _dump({"status": 503, "error": "busy", "retryAfter": 2, "fix": {"retryAfterSeconds": 2}})
         return _dump({"sessionId": sessionId, "events": evs, "next": evs[-1]["seq"] if evs else after,
                       "next_allowed_tools": G().engine.allowed(s)})
 
@@ -239,8 +244,9 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
                 raise ValueError("filters_json must be a JSON object")
         except ValueError as e:
             return _dump({"status": 422, "error": "guard_failed", "guard": "bad_input", "message": str(e),
-                          "fix": {"example": '{"siteId": "SITE-POHJOLA-TRE"}'}})
+                          "fix": {"example": json.dumps(ASK_FILTERS["examples"][0])}})
         try:
+            validate_input(ASK_FILTERS, "ask_insight", filters)
             return _dump(get_analyst().ask(prompt, filters, buyerId))
         except PlaybookError as e:
             return _dump({"status": e.status, **e.body()})
