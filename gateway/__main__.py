@@ -360,7 +360,7 @@ def make_app(live: bool = True) -> Starlette:
     async def activity(req: Request):
         return JSONResponse({"activity": state["agent"].activity(req.path_params["sid"])})
 
-    return Starlette(routes=[
+    app = Starlette(routes=[
         Route("/v1/orders/history/{oid}", order_detail), Route("/v1/orders/{sid}/activity", activity),
         Route("/v1/tools", tools_ep), Route("/v1/insights/playbook", insight_playbook_ep),
         Route("/v1/insights/sessions", insight_sessions, methods=["POST"]),
@@ -385,6 +385,8 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/orders/{oid}", order_get), Route("/v1/approvals", approval_inbox),
         Route("/v1/ops/agents/{aid}/pause", ops_pause, methods=["POST"]),
     ])
+    app.state.gw = gw  # the live Gateway (replaced on /v1/demo/reset); used by tests and tools
+    return app
 
 
 app = make_app(live=os.environ.get("AIMO_LIVE", "1") == "1")

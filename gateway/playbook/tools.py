@@ -486,13 +486,26 @@ def render_cards(gw, s: dict, args: dict) -> dict:
 
 # =================================================================== 7 Act
 def _lock_prices(gw, s):
+    """Every offer still holds: signature, validity, price AND stock for the planned quantity (re-checked live)."""
     d = s["data"]
+    qty: dict[str, float] = {}
     for l in d["plan"]["lines"]:
-        v = verify_offer(gw, d["offers"][l["gtin"]], qty=None)
+        qty[l["gtin"]] = qty.get(l["gtin"], 0) + l["qty"]
+    for l in d["plan"]["lines"]:
+        v = verify_offer(gw, d["offers"][l["gtin"]], qty=qty[l["gtin"]])
         if not v["verified"]:
             bad = "; ".join(c["detail"] for c in v["checks"] if not c["ok"] and c["id"] != "freshness")
+            only_stock = v["shortfall"] and all(c["ok"] or c["id"] == "freshness" for c in v["checks"] if c["id"] != "reverify")
+            if only_stock and "price now" not in bad:
+                _stock_changed(v["shortfall"])
             raise StepNotAllowed(f"Offer for {l['name']} is no longer valid ({bad}). Plan again.",
                                  guard="price_locked", next_allowed_tools=["plan_basket"])
+
+
+def _stock_changed(shortfall: list[str]):
+    raise StepNotAllowed("Stock changed since the quote: " + "; ".join(shortfall) + ". Re-quote with plan_basket.",
+                         guard="stock_changed", shortfall=shortfall, next_allowed_tools=["plan_basket"],
+                         fix={"call": "plan_basket", "why": "the planner re-plans on what is deliverable now"})
 
 
 NEGOTIATION_KEYS = {"price", "unitPrice", "prices", "discount", "total", "counterOffer", "lineTotal"}
@@ -535,20 +548,28 @@ def _confirmation(gw, s: dict, order: dict) -> dict:
 
 
 def place_order(gw, s: dict, args: dict) -> dict:
-    d = s["data"]
     _cite(s, args)
-    _lock_prices(gw, s)
+    with gw.lock:  # verify -> reserve -> place is one atomic step: two agents never both get the last stock
+        _lock_prices(gw, s)
+        return _place(gw, s)
+
+
+def _place(gw, s: dict) -> dict:
+    d = s["data"]
     plan = d["plan"]
     prev = d.get("order")
     order = {"orderId": prev["orderId"] if prev else new_id("ORD"), "status": "ordered", "placedAt": iso(gw.clock.now()),
              "lines": [{k: l[k] for k in ("lineId", "gtin", "name", "qty", "unit", "unitPrice", "lineTotal", "deliveryDate", "offerId")} for l in plan["lines"]],
              "total": plan["total"], "deliveries": _deliveries(plan), "amended": bool(prev),
              "decision": d["decision"]["decision"], "approvedBy": (d.get("approval") or {}).get("decidedBy")}
-    if d.get("approval") and d["approval"]["status"] == "approved":
-        d["approval"]["used"] = True
     for ln in order["lines"]:  # the price comes from the signed offer, never from the caller
         ln["offerId"] = d["offers"][ln["gtin"]]["offerId"]
+    ok, short = gw.backend.reserve(order["lines"])
+    if not ok:
+        _stock_changed(short)
     order["backendOrderRef"] = gw.backend.place_order(order)["backendOrderRef"]
+    if d.get("approval") and d["approval"]["status"] == "approved":
+        d["approval"]["used"] = True
     order["confirmation"] = _confirmation(gw, s, order)
     d["order"] = order
     gw.orders[order["orderId"]] = {"sessionId": s["sessionId"], **order}

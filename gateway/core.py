@@ -7,6 +7,7 @@ same methods; this skeleton keeps them in-process for tests and the CLI.
 from __future__ import annotations
 
 import copy
+import threading
 from datetime import timedelta
 
 from . import catalog, planner, policy, preferences, signals as sig, trust
@@ -21,6 +22,7 @@ from .util import iso, new_id, s2d
 class Gateway:
     def __init__(self, db: str = ":memory:", clock: Clock | None = None, live: bool = False):
         self.clock = clock or Clock(frozen=True)
+        self.lock = threading.RLock()  # order placement: verify -> reserve -> place is atomic (no overselling)
         self.store = Store(db)
         self.backend = FixtureBackend(self.clock)
         self.audit = AuditLedger(self.store, self.clock)

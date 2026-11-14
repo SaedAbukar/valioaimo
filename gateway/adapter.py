@@ -78,6 +78,24 @@ class FixtureBackend:
         return sum(s["qty"] for s in self.schedule(gtin) if s["date"] <= d2s(by))
 
     # --- writes --------------------------------------------------------------
+    def reserve(self, lines: list[dict]) -> tuple[bool, list[str]]:
+        """All-or-nothing stock check for an order about to be placed: per product, the quantities due by
+        each delivery date must fit what is deliverable by that date. Call under Gateway.lock, then place_order."""
+        short = []
+        by_gtin: dict[str, list[dict]] = {}
+        for ln in lines:
+            by_gtin.setdefault(ln["gtin"], []).append(ln)
+        for g, ls in by_gtin.items():
+            need = 0.0
+            for ln in sorted(ls, key=lambda x: x["deliveryDate"]):
+                need += ln["qty"]
+                have = self.available_by(g, date.fromisoformat(ln["deliveryDate"]))
+                if have + 1e-9 < need:
+                    short.append(f"{ln.get('name', g)}: only {have:g} {ln.get('unit', '')} available by {ln['deliveryDate']}, "
+                                 f"order needs {need:g}".replace("  ", " "))
+                    break
+        return not short, short
+
     def place_order(self, order: dict) -> dict:
         for ln in order["lines"]:
             g, q = ln["gtin"], ln["qty"]

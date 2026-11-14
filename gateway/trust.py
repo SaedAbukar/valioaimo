@@ -104,16 +104,18 @@ def verify_offer(gw, offer: dict, qty: float | None = None, live: bool = True) -
         need = qty if qty is not None else 0
         by = s2d(subj["availability"]["byDate"]) if subj["availability"].get("byDate") else gw.clock.today()
         avail = gw.backend.available_by(subj["gtin"], by)
-        issues = []
+        issues, short = [], []
         if abs(cur - subj["unitPrice"]) > 1e-9:
             issues.append(f"price now €{cur:.2f} (offer €{subj['unitPrice']:.2f})")
         if need and avail + 1e-9 < need:
+            short.append(f"{subj['name']}: only {avail:g} {subj['unit']} available by {by.isoformat()}, order needs {need:g}")
             issues.append(f"only {avail:g} {subj['unit']} available by {by.isoformat()}")
         res["reverify"] = (not issues, "price and stock confirmed live" if not issues else "; ".join(issues))
     else:
         res["reverify"] = (False, "not evaluated")
+        short = []
     checks = [{"id": cid, "label": label, "ok": res[cid][0], "detail": res[cid][1]} for cid, label in CHECKS]
     # freshness is advisory: stale stock is re-read live by check 6
     hard = [c for c in checks if c["id"] != "freshness"]
     return {"offerId": offer.get("offerId"), "verified": all(c["ok"] for c in hard), "checks": checks,
-            "trustLevel": subj.get("trustLevel", "L0") if ok else "L0"}
+            "trustLevel": subj.get("trustLevel", "L0") if ok else "L0", "shortfall": short}
