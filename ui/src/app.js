@@ -63,15 +63,17 @@ const store = { get(k, d) { try { const v = localStorage.getItem('aimo.' + k); r
 
 // ------------------------------------------------------------------ API: live gateway or replay
 const Live = {
-  async j(path, body) {
-    const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  async j(path, body, token) {
+    const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) };
+    const r = await fetch(path, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) });
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.message || 'Something went wrong'), { data });
     return data;
   },
   chat: (cid, text, buyerId) => Live.j('/v1/chat', { conversationId: cid, text, buyerId }),
   action: (cid, action, payload) => Live.j(`/v1/chat/${cid}/actions`, { action, payload }),
-  approve: async (sid, cid, ok) => { const r = await Live.j(`/v1/approvals/${sid}`, { ok, by: 'Laura Virtanen' }); return r; },
+  // the demo panel acts as the named approver, with that person's own (demo) credential
+  approve: async (sid, cid, ok, approverId) => Live.j(`/v1/approvals/${sid}`, { ok }, 'demo-human-' + (approverId || 'usr-lvirtanen')),
   chats: (bid) => Live.j('/v1/chats?buyerId=' + bid),
   chatGet: (cid) => Live.j('/v1/chats/' + cid),
   board: (bid) => Live.j('/v1/board?buyerId=' + bid),

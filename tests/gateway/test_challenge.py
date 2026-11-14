@@ -239,3 +239,16 @@ def test_11_plain_log_for_the_buyer(c):
     sid, _, _ = run_agent(c, BRIEF)
     log = c.get(f"/v1/sessions/{sid}/log", headers=AGENT).json()
     assert log["log"] and all(e["why"] for e in log["audit"] if e["what"].startswith("playbook."))
+
+
+def test_3_chef_app_approval_uses_the_approvers_own_credential(c):
+    """Regression: the chef app's 'OK, order it' goes through /v1/approvals as the named approver."""
+    conv = c.post("/v1/chat", json={"buyerId": "BUY-POHJOLA", "text": "Gala dinner for 180 on Saturday 21.11.: salmon starter, "
+                                    "beef tenderloin, chocolate mousse. 12 vegan, 8 gluten-free, 1 nut allergy."}).json()["conversation"]
+    c.post(f"/v1/chat/{conv['id']}/actions", json={"action": "order"})
+    c.post("/v1/chat", json={"conversationId": conv["id"], "text": "now 200 guests"})  # golden s5: over the event limit
+    sid = conv["sessionIds"][-1]
+    assert c.post(f"/v1/chat/{conv['id']}/actions", json={"action": "send_for_ok"}).status_code == 200
+    assert c.post(f"/v1/approvals/{sid}", json={"ok": True}).status_code == 401
+    r = c.post(f"/v1/approvals/{sid}", json={"ok": True}, headers=LAURA).json()
+    assert r["approval"]["decidedBy"] == "Laura Virtanen" and r["cards"][0]["type"] == "delivery"

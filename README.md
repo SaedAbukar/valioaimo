@@ -26,7 +26,7 @@ make setup      # .venv + requirements (Python 3.11+)
 make index      # builds gateway/data/aimo_products.json from the organisers' data in data_raw/ (not in git)
 make run        # gateway + chef app on http://127.0.0.1:8000
 make agent      # an external agent places the brief's order (scripts/agent_demo.py)
-make test       # 134 tests (+1 live test: AIMO_LIVE_TESTS=1)
+make test       # 135 tests (+1 live test: AIMO_LIVE_TESTS=1)
 make mcp        # the same gateway over MCP (stdio), as AIMO_AGENT_TOKEN's agent
 ```
 

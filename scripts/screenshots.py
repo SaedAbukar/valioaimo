@@ -110,9 +110,9 @@ def v3_views(page, tag):
     """Jira-style orders, Your year, Explore, Kitchens."""
     open_app(page)
     go(page, "orders")
-    page.locator('[data-omode="board"]').click(); page.wait_for_timeout(400)
+    page.locator('[data-omode="board"][aria-pressed]').click(); page.wait_for_timeout(400)
     shot(page, f"v3-orders-board-{tag}")
-    page.locator('[data-omode="list"]').click(); page.wait_for_timeout(300)
+    page.locator('[data-omode="list"][aria-pressed]').click(); page.wait_for_timeout(300)
     page.select_option("#o-group", "event"); page.wait_for_timeout(400)
     shot(page, f"v3-orders-list-{tag}")
     page.locator('[data-open][data-live="0"]:visible').first.click(); page.wait_for_timeout(800)

@@ -5,7 +5,7 @@
 - New: OpenAPI 3.1 (`/openapi.json`), `/.well-known/ucp`, signed `/.well-known/agent-card.json`, structured lookup (`/v1/products/search`, `/price-availability`) through the mock API, bearer credentials bound to one buyer (`gateway/auth.py`), approver inbox + human-only approvals, orders that must cite offer ids, no-negotiation guard, signed order confirmations, `/v1/mandate`, `/v1/offers/{id}[/verify]`, `/v1/orders/{id}`, plain session log, ops kill switch, pack labels in lookup, live pricing for recalled favourites.
 - MCP: 40 tools, identity from `AIMO_AGENT_TOKEN`, no approve tool.
 - `scripts/agent_demo.py` (stdlib-only external agent): brief request → AUTO order in < 1 s on the live mock API; 3,000 L → needs OK → Laura approves → order.
-- Tests: 134 passed + 1 opt-in live test (passed). Docs: README (gateway first + 3-minute demo), API, STANDARDS, EXPOSURE, ASSUMPTIONS.
+- Tests: 135 passed + 1 opt-in live test (passed). Docs: README (gateway first + 3-minute demo), API, STANDARDS, EXPOSURE, ASSUMPTIONS.
 - Git: pushed to github.com/SaedAbukar/valioaimo (organiser dataset index excluded).
 
 ### Remaining gaps
