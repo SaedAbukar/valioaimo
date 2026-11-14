@@ -467,3 +467,5 @@ button.li::after, .ibtn::after, .new-chat::after, .recent button::after, .th::af
 .qin::-webkit-outer-spin-button, .qin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .qin:focus { outline: 2px solid var(--sky-strong); border-radius: 6px; }
 .receipt-lines li > b.num { min-width: 92px; text-align: right; }
+.src-switch { margin-left: auto; } .src-switch + .seg-ctl { margin-left: 8px; }
+.live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--stop); margin-right: 6px; animation: pulse 1.2s infinite ease-in-out; }

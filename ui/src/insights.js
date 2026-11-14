@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const A = () => window.AimoApp;
-const I = { tab: 'year', site: '', card: 0, wrapped: null, ex: { filters: {}, prompt: '', answer: null, loading: false, view: 'chart', steps: false, asked: [] } };
+const I = { source: 'demo', tab: 'year', site: '', card: 0, wrapped: null, ex: { filters: {}, prompt: '', answer: null, loading: false, view: 'chart', steps: false, asked: [] } };
 const STARTERS = ['Spend by month', 'Top 10 products by spend, rest as other', 'Waste % by kitchen compared to previous period, last 3 months',
   'Category mix per kitchen', 'Carbon footprint by category, share', 'Orders by weekday and kitchen as a heatmap', 'Spend and waste % by product'];
 const STEP_WORDS = { start_analysis: 'Opened your data', describe_data: 'Looked at what can be asked', get_values: 'Checked the values', run_query: 'Asked the question',
@@ -47,7 +47,7 @@ async function load() {
   const { API, S } = A();
   if (!I.sites) { try { I.sites = ((await API.kitchens(S.buyerId)) || {}).sites || []; } catch (e) { I.sites = []; } }
   if (I.tab === 'year' && !I.wrapped) {
-    try { I.wrapped = await API.wrapped(S.buyerId, I.site); } catch (e) { I.wrapped = { cards: [] }; }
+    try { I.wrapped = await API.wrapped(S.buyerId, I.site, I.source); } catch (e) { I.wrapped = { cards: [] }; }
   }
   if (I.tab === 'explore' && !I.ex.answer && !I.ex.loading) await ask(STARTERS[0]);
   if (S.view === 'insights') A().renderView();
@@ -114,6 +114,7 @@ function view() {
   const { esc, S, KITCHENS } = A();
   if (!I.sites && !I.loadingStarted) { I.loadingStarted = true; load().finally(() => { I.loadingStarted = false; }); }
   return `<div class="wrap wide"><div class="page-h"><h1>Insights</h1><span class="muted">${esc(KITCHENS[S.buyerId].name)}</span>
+    ${A().S.mode === 'live' ? `<div class="seg-ctl small src-switch" role="group" aria-label="Data"><button data-isrc="demo" aria-pressed="${I.source !== 'live'}">Demo history</button><button data-isrc="live" aria-pressed="${I.source === 'live'}">${I.source === 'live' ? '<span class="live-dot"></span>' : ''}Live orders</button></div>` : ''}
     <div class="seg-ctl" role="tablist" aria-label="Insights"><button role="tab" data-itab="year" aria-selected="${I.tab === 'year'}" aria-pressed="${I.tab === 'year'}">Your year</button><button role="tab" data-itab="explore" aria-selected="${I.tab === 'explore'}" aria-pressed="${I.tab === 'explore'}">Explore</button></div></div>
     ${I.tab === 'year' ? yearView() : exploreView()}</div>`;
 }
@@ -137,7 +138,7 @@ async function ask(prompt) {
   const f = I.ex.filters;
   let answer;
   try {
-    answer = await API.ask(S.buyerId, prompt, { period: f.period, category: f.category, event_type: f.event_type }, f.siteId);
+    answer = await API.ask(S.buyerId, prompt, { period: f.period, category: f.category, event_type: f.event_type }, f.siteId, I.source);
   } catch (e) { answer = { error: e.message || 'That question could not be answered.' }; }
   if (seq !== I.ex.seq) return;  // a newer question was asked meanwhile
   I.ex.answer = answer;
@@ -146,6 +147,7 @@ async function ask(prompt) {
 }
 
 async function click(t, d) {
+  if (d.isrc) { I.source = d.isrc; I.wrapped = null; I.card = 0; I.ex.answer = null; A().renderView(); await load(); return true; }
   if (d.itab) { I.tab = d.itab; A().renderView(); await load(); return true; }
   if (d.ycard) { const n = (I.wrapped.cards || []).length; I.card = Math.max(0, Math.min(n - 1, I.card + +d.ycard)); A().renderView(); return true; }
   if (d.ask) { await ask(d.ask); return true; }

@@ -85,8 +85,8 @@ const Live = {
   history: (bid, p) => Live.j('/v1/orders/history?' + new URLSearchParams(Object.assign({ buyerId: bid }, p))),
   orderDetail: (bid, id) => Live.j(`/v1/orders/history/${encodeURIComponent(id)}?buyerId=${bid}`),
   activity: (sid) => Live.j(`/v1/orders/${sid}/activity`),
-  wrapped: (bid, site) => Live.j(`/v1/insights/wrapped?buyerId=${bid}${site ? '&siteId=' + site : ''}`),
-  ask: (bid, prompt, filters, site) => Live.j('/v1/insights/ask', { buyerId: bid, prompt, filters, siteId: site || null }),
+  wrapped: (bid, site, source) => Live.j(`/v1/insights/wrapped?buyerId=${bid}${site ? '&siteId=' + site : ''}&source=${source || 'demo'}`),
+  ask: (bid, prompt, filters, site, source) => Live.j('/v1/insights/ask', { buyerId: bid, prompt, filters, siteId: site || null, source: source || 'demo' }),
   kitchens: (bid) => Live.j('/v1/kitchens?buyerId=' + bid),
   // the demo switch to Valio Aimo's side uses the operations demo credential (demo mode only)
   ops: (path) => Live.j('/v1/ops/' + path, undefined, 'demo-ops'),

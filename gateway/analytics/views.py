@@ -33,10 +33,12 @@ def wrapped(gw, bid: str, site_id: str | None = None) -> dict:
     tot = _q(gw, bid, {"measures": ["spend", "orders", "kg"]}, site_id)
     if not tot["rows"] or not tot["rows"][0]["spend"]:
         return {"title": f"{where}: your year", "cards": [{"kind": "empty", "eyebrow": "Your year", "headline": "Your story starts now.",
-                                                             "sub": "Order for a few weeks and your year in food appears here.", "numbers": []}]}
+                                                             "sub": ("No orders through the gateway yet. Order in the chat and watch this fill up."
+                                                                     if store.SOURCE.get() == "live" else "Order for a few weeks and your year in food appears here."), "numbers": []}]}
     t = tot["rows"][0]
     cards = [{"kind": "intro", "eyebrow": "Your year in food", "headline": f"{where}, what a year.",
-              "sub": "Dec 2025 – Nov 2026, every order you placed with Valio Aimo.",
+              "sub": "Every order placed through the gateway in this demo, live." if store.SOURCE.get() == "live"
+                     else "Dec 2025 – Nov 2026, every order you placed with Valio Aimo.",
               "numbers": [{"label": "spent", "value": fmt(t["spend"], "EUR")}, {"label": "orders", "value": f"{t['orders']:,}"},
                           {"label": "of food", "value": f"{t['kg'] / 1000:,.1f} t"}]}]
     top = _q(gw, bid, {"measures": ["spend", "orders"], "dimensions": ["product"], "sort": [{"by": "spend", "dir": "desc"}], "limit": 5}, site_id)

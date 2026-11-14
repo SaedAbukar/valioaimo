@@ -44,7 +44,7 @@ from . import ops, seller  # noqa: E402
 from .playbook.engine import GuardFailed, NotFound, validate_input  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
 from .playbook.tools import decide_approval  # noqa: E402
-from .analytics import engine as insight_engine, views  # noqa: E402
+from .analytics import engine as insight_engine, store as istore, views  # noqa: E402
 from .analytics.analyst import ASK_FILTERS, Analyst  # noqa: E402
 
 
@@ -531,12 +531,14 @@ def make_app(live: bool = True) -> Starlette:
         b = await body(req)
         _, bid = buyer_of(req, bid=b.get("buyerId"))
         validate_input(ASK_FILTERS, "ask", b.get("filters") or {})
-        return JSONResponse(await off_loop(state["analyst"].ask, b.get("prompt", ""), b.get("filters") or {}, bid, b.get("siteId")))
+        return JSONResponse(await off_loop(istore.using, b.get("source"), state["analyst"].ask, b.get("prompt", ""),
+                                           b.get("filters") or {}, bid, b.get("siteId")))
 
     @guarded
     async def wrapped(req: Request):
         _, bid = buyer_of(req)
-        return JSONResponse(views.wrapped(gw(), bid, req.query_params.get("siteId")))
+        return JSONResponse(await off_loop(istore.using, req.query_params.get("source"), views.wrapped, gw(), bid,
+                                           req.query_params.get("siteId")))
 
     @guarded
     async def history(req: Request):

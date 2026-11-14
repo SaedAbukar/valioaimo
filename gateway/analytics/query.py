@@ -42,8 +42,9 @@ ORDERS = {"name": "orders", "table": "line", "schema": SCHEMA, "period": (START,
 
 def dataset(name: str | None) -> dict:
     from .datasets import DATASETS
+    from .store import LIVE_PERIOD, SOURCE
     if name in (None, "orders"):
-        return ORDERS
+        return {**ORDERS, "period": LIVE_PERIOD} if SOURCE.get() == "live" else ORDERS
     if name not in DATASETS:
         _fail(f"Unknown dataset '{name}'.", f"Use one of: orders, {', '.join(DATASETS)}.")
     return {"name": name, **DATASETS[name]}

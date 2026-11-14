@@ -100,7 +100,7 @@ class InsightEngine:
 
     def _conn_for(self, name: str | None):
         if name in (None, "orders"):
-            return self.conn
+            return store.conn_for(self.gw)  # demo history, or this gateway's own orders (store.SOURCE)
         from . import datasets
         return datasets.connect(self.gw)
 

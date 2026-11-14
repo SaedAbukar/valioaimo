@@ -6,6 +6,7 @@ and the recorded demo are repeatable. Synthetic data on the curated demo assortm
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import math
 import random
@@ -181,7 +182,66 @@ def load(gw=None) -> sqlite3.Connection:
     return conn
 
 
+# Which order data the insights read: "demo" = the generated year above; "live" = only the orders placed through
+# this gateway (chat, Agent mode, MCP and REST agents), so a demo can start empty and fill up as people order.
+SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("insight_source", default="demo")
+LIVE_PERIOD = (date(2026, 11, 1), date(2026, 12, 31))  # the demo clock runs in Nov 2026; deliveries land within weeks
+
+
+def live_rows(gw) -> list[dict]:
+    """One row per ordered line, from the gateway's own orders (amended orders count once, as their latest version)."""
+    from .. import catalog
+    rows = []
+    for o in list(gw.orders.values()):
+        s = gw.engine.sessions.get(o["sessionId"])
+        if not s or o.get("status") not in ("ordered", "delivered", "done"):
+            continue
+        b = gw.buyers[s["buyerId"]]
+        site = b.get("site") or b["sites"][0]
+        ev = (s["data"].get("brief") or {}).get("event")
+        usage = {u["need"]: u.get("usage", 1) for u in (s["data"].get("usage") or {}).get("lines", [])}
+        for ln in o["lines"]:
+            p = catalog.by_gtin(ln["gtin"]) or {}
+            day = date.fromisoformat(ln["deliveryDate"])
+            line = next((l for l in (s["data"].get("plan") or {}).get("lines", []) if l["gtin"] == ln["gtin"]), {})
+            used = min(1.0, usage.get(line.get("need"), 1.0))
+            kg = ln["qty"] * (p.get("kgPerUnit") or 1)
+            rows.append({
+                "order_id": o["orderId"], "order_type": "event" if ev else "replenishment", "buyer_id": b["id"],
+                "site_id": site.get("id"), "site_name": site.get("name"), "date": day.isoformat(), "month": day.strftime("%Y-%m"),
+                "weekday": day.strftime("%a"), "event_id": s["sessionId"] if ev else None,
+                "event_type": EVENT_LABEL.get(ev.get("type"), ev.get("typeLabel")) if ev else None,
+                "event_name": ev.get("name") if ev else None, "guests": ev.get("guests") if ev else None,
+                "product": ln["name"], "product_key": p.get("key", ln["gtin"]),
+                "category": CATEGORY_LABEL.get(p.get("category"), p.get("category") or "Other"), "brand": p.get("brand"),
+                "temp": "Chilled" if p.get("shelfLifeDays", 365) <= 21 else "Ambient & frozen",
+                "qty": ln["qty"], "unit": ln["unit"], "unit_price": ln["unitPrice"], "value_eur": ln["lineTotal"],
+                "kg": round(kg, 2), "co2e_kg": round(kg * (p.get("co2eKgPerKg") or 0), 2), "on_time": 1,
+                "used_pct": round(used, 3), "waste_eur": round(ln["lineTotal"] * (1 - used), 2),
+                "label": "right_sized" if used >= 0.9 else "over_ordered"})
+    return rows
+
+
+def live_conn(gw) -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.execute(f"CREATE TABLE line ({', '.join(COLUMNS)})")
+    conn.executemany(f"INSERT INTO line VALUES ({', '.join('?' * len(COLUMNS))})", [tuple(r[c] for c in COLUMNS) for r in live_rows(gw)])
+    conn.commit()
+    return conn
+
+
 def conn_for(gw) -> sqlite3.Connection:
+    if SOURCE.get() == "live":
+        return live_conn(gw)  # rebuilt per question: it is small and always current
     if not hasattr(gw, "history_db"):
         gw.history_db = load(gw)
     return gw.history_db
+
+
+def using(source: str | None, fn, *a, **k):
+    """Run fn with the insight data source set (used by the routes, inside the worker thread)."""
+    tok = SOURCE.set("live" if source == "live" else "demo")
+    try:
+        return fn(*a, **k)
+    finally:
+        SOURCE.reset(tok)
