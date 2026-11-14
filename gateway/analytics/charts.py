@@ -102,6 +102,36 @@ def _tooltip(result):
     return [_enc(result, c["name"]) | ({"format": ",.1f"} if c["role"] != "dimension" else {}) for c in result["columns"][:6]]
 
 
+def _layer_time_calcs(spec: dict, m: str):
+    """Forecast = the same series, dashed, with a light band for the likely range (one axis, one colour);
+    unusual periods = larger dots with a surface ring (config style 'anomaly') and a tooltip; a period that is still
+    running = a hollow dot, kept off the line so it does not look like a drop."""
+    enc, mark = spec.pop("encoding"), spec.pop("mark")
+    x, y, tip = enc["x"], enc["y"], enc["tooltip"]
+    rows = spec["data"]["values"]
+    fut = "datum.is_forecast || datum.forecast_anchor"
+    layers = []
+    if any(r.get("is_forecast") for r in rows):
+        layers.append({"transform": [{"filter": fut}], "mark": {"type": "area", "opacity": 0.18, "interpolate": "monotone"},
+                       "encoding": {"x": x, "y": {"field": f"{m}_lo", "type": "quantitative", "title": y["title"]},
+                                    "y2": {"field": f"{m}_hi"}}})
+    layers.append({"transform": [{"filter": "!datum.is_forecast && !datum.is_partial"}], "mark": mark,
+                   "encoding": {"x": x, "y": y, "tooltip": tip}})
+    if any(r.get("is_forecast") for r in rows):
+        layers.append({"transform": [{"filter": fut}],
+                       "mark": {"type": "line", "strokeDash": [6, 4], "strokeWidth": 2, "interpolate": "monotone"},
+                       "encoding": {"x": x, "y": y, "tooltip": tip + [{"field": f"{m}_lo", "type": "quantitative", "title": "Low", "format": ",.0f"},
+                                                                       {"field": f"{m}_hi", "type": "quantitative", "title": "High", "format": ",.0f"}]}})
+    if any(r.get("is_partial") for r in rows):
+        layers.append({"transform": [{"filter": "datum.is_partial"}], "mark": {"type": "point", "filled": False, "size": 64, "strokeWidth": 2},
+                       "encoding": {"x": x, "y": y, "tooltip": tip}})
+    if any(r.get("is_anomaly") for r in rows):
+        layers.append({"transform": [{"filter": "datum.is_anomaly"}],
+                       "mark": {"type": "point", "filled": True, "size": 110, "strokeWidth": 2, "style": "anomaly"},
+                       "encoding": {"x": x, "y": y, "tooltip": tip + [{"field": f"{m}_z", "type": "quantitative", "title": "How unusual (z)"}]}})
+    spec["layer"] = layers
+
+
 def build(result, intent: dict) -> dict:
     t = (intent or {}).get("type")
     if t not in TYPES:
@@ -132,6 +162,8 @@ def build(result, intent: dict) -> dict:
             spec["encoding"]["x"]["axis"] = None
             spec["encoding"]["y"]["axis"] = None
             spec["config"] = {"view": {"stroke": None}}
+        elif any(r.get("is_forecast") or r.get("is_anomaly") or r.get("is_partial") for r in result["rows"]):
+            _layer_time_calcs(spec, m)
     elif t in ("column", "bar"):
         cat = x if t == "column" else (intent.get("x") or dims[0])
         val = _enc(result, m)

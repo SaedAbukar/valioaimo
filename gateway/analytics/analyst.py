@@ -161,6 +161,11 @@ class Analyst:
             spec.setdefault("calc", []).append({"type": "running_total", "of": measures[0]})
         if re.search(r"moving average|rolling|liukuva", t):
             spec.setdefault("calc", []).append({"type": "moving_avg", "of": measures[0], "window": 3})
+        one_series = len(spec.get("dimensions") or []) == 1 and isinstance(spec["dimensions"][0], dict)
+        if one_series and re.search(r"forecast|predict|next \d* ?months?|coming months|ennuste|ennusta", t):
+            spec.setdefault("calc", []).append({"type": "forecast", "of": measures[0], "horizon": 3})
+        if one_series and re.search(r"unusual|anomal|spike|odd|outlier|poikkea", t):
+            spec.setdefault("calc", []).append({"type": "anomaly", "of": measures[0]})
         # page filters always apply (and win over guesses for the same field)
         for field in ("site", "category", "event_type"):
             if filters.get(field):

@@ -117,3 +117,79 @@ def test_ops_k_anonymity_suppresses_small_groups(c):
     assert res["rows"] == [] and res["suppressed"] >= 1  # every category has fewer than 3 buyers
     with pytest.raises(Exception):
         query.run(datasets.connect(gw), {"dataset": "demand", "measures": ["planned_qty"], "dimensions": ["buyer"]}, None, k_anon=3)
+
+
+# ---------------------------------------------------------------- Task 10: forecast, anomaly, explain_change
+from gateway.analytics import charts, explain, store  # noqa: E402
+
+MONTHLY = {"measures": ["spend"], "dimensions": [{"field": "date", "grain": "month"}]}
+
+
+def test_forecast_marks_future_rows_and_bounds():
+    res = query.run(store.load(), {**MONTHLY, "calc": [{"type": "forecast", "of": "spend", "horizon": 3}]}, "BUY-POHJOLA")
+    fut = [r for r in res["rows"] if r.get("is_forecast")]
+    past = [r for r in res["rows"] if not r.get("is_forecast")]
+    assert len(fut) == 3 and [r["date"] for r in fut] == ["2026-12", "2027-01", "2027-02"]
+    assert all(r["spend_lo"] <= r["spend"] <= r["spend_hi"] for r in fut) and fut[0]["spend"] > 0
+    full = [r for r in past if not r.get("is_partial")]
+    assert full[-1]["forecast_anchor"] is True and past[-1]["date"] == "2026-11" and past[-1]["is_partial"]  # Nov is still running
+    assert "forecast" in json_facts(res)
+
+
+def json_facts(res):
+    return " ".join(explain.run(res)["facts"]).lower()
+
+
+def test_forecast_needs_one_time_dimension():
+    from gateway.playbook.engine import GuardFailed
+    with pytest.raises(GuardFailed) as e:
+        query.run(store.load(), {"measures": ["spend"], "dimensions": ["category"], "calc": [{"type": "forecast"}]}, "BUY-POHJOLA")
+    assert e.value.extra["fix"]
+
+
+def test_anomaly_flags_a_spike():
+    conn = store.load()
+    conn.execute("UPDATE line SET value_eur = value_eur * 6 WHERE buyer_id = 'BUY-POHJOLA' AND month = '2026-07'")
+    res = query.run(conn, {**MONTHLY, "calc": [{"type": "anomaly", "of": "spend"}]}, "BUY-POHJOLA")
+    flagged = [r["date"] for r in res["rows"] if r.get("is_anomaly")]
+    assert flagged == ["2026-07"] and abs(next(r for r in res["rows"] if r["date"] == "2026-07")["spend_z"]) > 3
+    assert "unusual" in json_facts(res)
+    clean = query.run(store.load(), {**MONTHLY, "calc": [{"type": "anomaly", "of": "spend"}]}, "BUY-POHJOLA")
+    assert not [r for r in clean["rows"] if r.get("is_anomaly")]
+
+
+def test_explain_change_contributions_sum_to_total(c):
+    sid = c.post("/v1/insights/sessions", json={}, headers=AGENT).json()["sessionId"]
+    c.post(f"/v1/insights/sessions/{sid}/tools/describe_data", json={}, headers=AGENT)
+    r = c.post(f"/v1/insights/sessions/{sid}/tools/explain_change", headers=AGENT, json={
+        "measure": "spend", "period_a": {"from": "2026-08-01", "to": "2026-08-31"},
+        "period_b": {"from": "2026-09-01", "to": "2026-09-30"}, "by": "site"}).json()["output"]
+    total = r["change"]
+    assert abs(sum(x["contribution"] for x in r["contributions"]) - total) <= 0.05
+    assert len(r["contributions"]) <= 6 and r["sentences"][0].startswith(r["contributions"][0]["value"])
+    assert "of the" in r["sentences"][0]
+    bad = c.post(f"/v1/insights/sessions/{sid}/tools/explain_change", headers=AGENT, json={
+        "measure": "waste_pct", "period_a": {"from": "2026-08-01", "to": "2026-08-31"},
+        "period_b": {"from": "2026-09-01", "to": "2026-09-30"}, "by": "site"})
+    assert bad.status_code == 422 and bad.json()["fix"]
+
+
+def test_forecast_chart_is_dashed_and_has_band():
+    res = query.run(store.load(), {**MONTHLY, "calc": [{"type": "forecast", "of": "spend", "horizon": 3}]}, "BUY-POHJOLA")
+    spec = charts.build(res, {"type": "line"})
+    layers = spec["layer"]
+    marks = [l["mark"]["type"] if isinstance(l["mark"], dict) else l["mark"] for l in layers]
+    assert "area" in marks and marks.count("line") == 2
+    dashed = [l for l in layers if isinstance(l["mark"], dict) and l["mark"].get("strokeDash")]
+    assert dashed and dashed[0]["transform"]
+    band = next(l for l in layers if l["mark"]["type"] == "area")
+    assert band["encoding"]["y"]["field"] == "spend_lo" and band["encoding"]["y2"]["field"] == "spend_hi"
+
+
+def test_anomaly_chart_rings_the_points_with_a_tooltip():
+    conn = store.load()
+    conn.execute("UPDATE line SET value_eur = value_eur * 6 WHERE buyer_id = 'BUY-POHJOLA' AND month = '2026-07'")
+    res = query.run(conn, {**MONTHLY, "calc": [{"type": "anomaly", "of": "spend"}]}, "BUY-POHJOLA")
+    spec = charts.build(res, {"type": "line"})
+    pts = [l for l in spec["layer"] if l["mark"]["type"] == "point"]
+    assert pts and pts[0]["mark"]["strokeWidth"] >= 2 and pts[0]["encoding"]["tooltip"]

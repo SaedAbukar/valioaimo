@@ -46,8 +46,8 @@ steps:
     does: "Build the chart. Give only {type}; optionally x, y, color, size, title. Types: line, area, column, bar, stacked, grouped, percent, heatmap, donut, scatter, bubble, histogram, boxplot, waterfall, kpi, sparkline, table."
   - id: explain
     n: 5
-    tools: [explain_result]
-    does: Get a plain caption and three facts for the last result.
+    tools: [explain_result, explain_change]
+    does: "Get a plain caption and three facts for the last result; or explain_change: which values of a dimension drove the change of a measure between two periods."
 
 recipes:   # worked examples a small model can copy
   - ask: "How has our spend moved this year?"

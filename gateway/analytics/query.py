@@ -17,6 +17,7 @@ dropped (reported as `suppressed`), and grouping by a buyer-identifying field is
 """
 from __future__ import annotations
 
+import statistics
 from datetime import date, timedelta
 
 from ..playbook.engine import GuardFailed
@@ -28,7 +29,8 @@ GRAINS = {"day": "date", "week": "strftime('%Y-W%W', date)", "month": "substr(da
 OPS = {"eq": "=", "neq": "!=", "gte": ">=", "lte": "<=", "contains": "LIKE", "in": "IN", "not_in": "NOT IN", "between": "BETWEEN"}
 ADDITIVE = {"spend", "waste", "co2e", "kg", "quantity", "lines"}
 RELATIVE = ["last_month", "last_3_months", "last_6_months", "last_30_days", "this_year"]
-CALCS = ["share", "running_total", "rank", "change_pct", "moving_avg"]
+CALCS = ["share", "running_total", "rank", "change_pct", "moving_avg", "forecast", "anomaly"]
+TIME_CALCS = {"forecast", "anomaly"}  # need exactly one dimension, the date
 
 
 def _fail(msg: str, fix: str):
@@ -105,6 +107,13 @@ def normalise(spec: dict, ds: dict | None = None) -> dict:
     for c in calc:
         if c.get("type") not in CALCS:
             _fail(f"Unknown calc '{c.get('type')}'.", f"Use one of: {', '.join(CALCS)}.")
+        if c["type"] in TIME_CALCS and not (len(dims) == 1 and DIMS[dims[0]["field"]]["type"] == "time"):
+            _fail(f"calc '{c['type']}' works on one series over time.",
+                  "Use exactly one dimension: {'field': 'date', 'grain': 'month'} (or week, day, quarter).")
+        if c["type"] == "forecast":
+            h = c.setdefault("horizon", 3)
+            if not (isinstance(h, int) and 1 <= h <= 6):
+                _fail("forecast horizon must be 1 to 6 periods.", "Example: {'type': 'forecast', 'of': 'spend', 'horizon': 3}.")
         c.setdefault("of", ms[0])
         if c["of"] not in ms:
             _fail(f"calc '{c['type']}' refers to '{c['of']}', which is not a measure in this query.", f"Use one of: {', '.join(ms)}.")
@@ -220,6 +229,13 @@ def run(conn, spec: dict, buyer_id: str | None, k_anon: int = 0) -> dict:
                 r[f"{m}_prev"] = p.get(m)
                 r[f"{m}_change_pct"] = round((r[m] - p[m]) / p[m] * 100, 1) if p.get(m) and r[m] is not None else None
     _calcs(rows, s["calc"])
+    if time_dim and any(c["type"] in TIME_CALCS for c in s["calc"]):
+        partial = _partial_last(rows, time_dim, s, b, ds)
+        for c in s["calc"]:
+            if c["type"] == "anomaly":
+                _anomaly(rows, time_dim, c["of"], partial)
+            elif c["type"] == "forecast":
+                rows = _forecast(rows, time_dim, c["of"], c["horizon"], next(d["grain"] for d in s["dimensions"]), partial)
     for r in rows:
         for k, v in r.items():
             if isinstance(v, float):
@@ -240,7 +256,103 @@ def _extra_label(k: str, meas: dict | None = None) -> str:
     base, _, kind = k.partition("_")
     m = (meas or MEAS).get(base, {}).get("label", base)
     return {"prev": f"{m}, before", "change_pct": f"{m}, change %", "share": f"{m}, share %", "running_total": f"{m}, running total",
-            "rank": f"{m}, rank", "moving_avg": f"{m}, moving average"}.get(kind, k)
+            "rank": f"{m}, rank", "moving_avg": f"{m}, moving average", "lo": f"{m}, low estimate", "hi": f"{m}, high estimate",
+            "z": f"{m}, how unusual (z)", "forecast": "Forecast", "anomaly": "Unusual", "anchor": "Last actual"}.get(kind, k)
+
+
+# ---------------------------------------------------------------- forecast and anomaly (no ML: deterministic, explainable)
+def _partial_last(rows, key, s, b: date, ds) -> bool:
+    """The last period is still running (e.g. the month to the 12th): leave it out of fits and flags."""
+    if not rows:
+        return False
+    grain = next((d["grain"] for d in s["dimensions"] if d["field"] == key), None)
+    if grain == "month":
+        nxt = date(b.year + (b.month == 12), b.month % 12 + 1, 1)
+        return str(rows[-1][key]) == b.isoformat()[:7] and (nxt - b).days > 1
+    if grain == "quarter":
+        return str(rows[-1][key]) == f"{b.year}-Q{(b.month + 2) // 3}" and not (b.month % 3 == 0 and b.day >= 28)
+    if grain == "week":
+        return b.weekday() != 6 and str(rows[-1][key]) == b.strftime("%Y-W%W")
+    return False
+
+
+def _shift(label: str, grain: str, n: int) -> str:
+    """The label n periods later (n may be negative)."""
+    if grain == "month":
+        y, m = map(int, label.split("-"))
+        t = y * 12 + (m - 1) + n
+        return f"{t // 12}-{t % 12 + 1:02d}"
+    if grain == "quarter":
+        y, q = label.split("-Q")
+        t = int(y) * 4 + int(q) - 1 + n
+        return f"{t // 4}-Q{t % 4 + 1}"
+    if grain == "week":
+        y, w = label.split("-W")
+        d = date.fromisocalendar(int(y), max(1, int(w)), 1) + timedelta(weeks=n)
+        return d.strftime("%Y-W%W")
+    return (date.fromisoformat(label) + timedelta(days=n)).isoformat()
+
+
+SEASON = {"month": 12, "quarter": 4, "week": 52, "day": 364}
+
+
+def _forecast(rows, key, m, horizon, grain, partial):
+    """Seasonal-naive (same period last year) blended 50/50 with a linear trend over the last 6 full periods.
+    Bounds: +-1.28 sigma of the trend residuals (about an 80% band). Future rows carry is_forecast: true."""
+    hist = rows[:-1] if partial else rows
+    pts = [(i, r[m]) for i, r in enumerate(hist) if r.get(m) is not None][-6:]
+    if len(pts) < 3:
+        _fail("A forecast needs at least 3 full periods of history.", "Widen the period or use a coarser grain.")
+    n = len(pts)
+    mx, my = sum(i for i, _ in pts) / n, sum(v for _, v in pts) / n
+    sxx = sum((i - mx) ** 2 for i, _ in pts) or 1
+    slope = sum((i - mx) * (v - my) for i, v in pts) / sxx
+    trend = lambda i: my + slope * (i - mx)  # noqa: E731
+    sigma = (sum((v - trend(i)) ** 2 for i, v in pts) / max(1, n - 2)) ** 0.5
+    by_label = {str(r[key]): r[m] for r in hist}
+    last_i, last_label = len(hist) - 1, str(hist[-1][key])
+    out = [dict(r, is_forecast=False) for r in rows]
+    for r in out:
+        if str(r[key]) == last_label:
+            r["forecast_anchor"] = True
+            r[f"{m}_lo"] = r[f"{m}_hi"] = r[m]
+    nonneg = all(v >= 0 for _, v in pts)
+    if partial:
+        out[-1]["is_partial"] = True  # still running: shown, but not fitted and not forecast over
+    for k in range(1, horizon + 1 + (1 if partial else 0)):
+        label = _shift(last_label, grain, k)
+        t = trend(last_i + k)
+        seas = by_label.get(_shift(label, grain, -SEASON[grain]))
+        f = 0.5 * seas + 0.5 * t if seas is not None else t
+        lo, hi = f - 1.28 * sigma, f + 1.28 * sigma
+        if nonneg:
+            f, lo = max(0.0, f), max(0.0, lo)
+        if partial and label == str(rows[-1][key]):
+            continue
+        out.append({key: label, m: f, f"{m}_lo": lo, f"{m}_hi": hi, "is_forecast": True,
+                    "forecast_basis": "same period last year + trend" if seas is not None else "trend of the last 6 periods"})
+    return out
+
+
+def _anomaly(rows, key, m, partial):
+    """Robust z-score against the moving median of the previous 6 periods (MAD, floored at 5% of the median);
+    |z| > 3 is unusual."""
+    vals = [r.get(m) for r in rows]
+    for i, r in enumerate(rows):
+        r["is_anomaly"] = False
+        win = [v for v in vals[max(0, i - 6):i] if v is not None]
+        if len(win) < 3 or vals[i] is None or (partial and i == len(rows) - 1):
+            r[f"{m}_z"] = None
+            continue
+        med = statistics.median(win)
+        # floor at 5% of the median: ordinary +-15% swings in a kitchen's month are not "unusual"
+        mad = max(statistics.median(abs(v - med) for v in win), 0.05 * abs(med))
+        if mad == 0:
+            r[f"{m}_z"] = None
+            continue
+        z = 0.6745 * (vals[i] - med) / mad
+        r[f"{m}_z"] = round(z, 2)
+        r["is_anomaly"] = abs(z) > 3
 
 
 def _calcs(rows: list[dict], calcs: list[dict]):

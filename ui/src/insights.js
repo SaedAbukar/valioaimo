@@ -21,6 +21,7 @@ function vegaConfig() {
     mark: { color: cat[0] }, bar: { color: cat[0] }, line: { color: cat[0] }, point: { color: cat[0], size: 50, filled: true },
     area: { color: cat[0] }, arc: { stroke: css('--surface'), strokeWidth: 2 }, rect: { stroke: css('--surface'), strokeWidth: 2 },
     text: { color: css('--fg'), font: 'Figtree, system-ui, sans-serif' },
+    style: { anomaly: { stroke: css('--surface') } },  // unusual periods: a surface ring keeps them legible on the line
   };
 }
 

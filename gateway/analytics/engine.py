@@ -47,7 +47,7 @@ class InsightEngine:
         step = s["step"]
         if step == "start":
             return ["describe_data"]
-        out = ["describe_data", "get_values", "run_query"]
+        out = ["describe_data", "get_values", "run_query", "explain_change"]
         if s.get("result") is not None:
             out += ["suggest_chart", "build_chart", "explain_result"]
         return out
@@ -150,6 +150,49 @@ class InsightEngine:
         spec = charts.build(s["result"], a)
         s["chart"] = spec
         return {"chart": spec}
+
+    def _explain_change(self, s, a):
+        """Which values of `by` drove the change of `measure` from period_a to period_b (top 5 + Other)."""
+        ds = query.dataset(a.get("dataset"))
+        meas = ds["schema"]["measures"]
+        m, by = a["measure"], a["by"]
+        if m not in meas:
+            raise GuardFailed(f"Unknown measure '{m}'.", fix=f"Use one of: {', '.join(meas)}.")
+        sql = meas[m]["sql"].upper()
+        if not sql.startswith(("SUM(", "COUNT(")) or "/" in sql:
+            raise GuardFailed(f"'{m}' is a rate, so its change does not split into parts.",
+                              fix="Use a total such as spend, waste, co2e, quantity or orders.")
+        conn = self._conn_for(ds["name"])
+        base = {"dataset": ds["name"], "measures": [m], "dimensions": [by]}
+        if s["siteId"]:
+            base["filters"] = [{"field": "site", "op": "eq", "value": self._site_name(s)}]
+        ra = query.run(conn, {**base, "period": a["period_a"]}, s["buyerId"])
+        rb = query.run(conn, {**base, "period": a["period_b"]}, s["buyerId"])
+        va = {r[by]: r[m] or 0 for r in ra["rows"]}
+        vb = {r[by]: r[m] or 0 for r in rb["rows"]}
+        parts = [{"value": k, "a": va.get(k, 0), "b": vb.get(k, 0), "contribution": round(vb.get(k, 0) - va.get(k, 0), 2)}
+                 for k in set(va) | set(vb)]
+        parts.sort(key=lambda p: -abs(p["contribution"]))
+        total_a, total_b = sum(va.values()), sum(vb.values())
+        change = round(total_b - total_a, 2)
+        top, rest = parts[:5], parts[5:]
+        if rest:
+            top.append({"value": "Other", "a": sum(p["a"] for p in rest), "b": sum(p["b"] for p in rest),
+                        "contribution": round(sum(p["contribution"] for p in rest), 2)})
+        unit, label = meas[m]["unit"], meas[m]["label"].lower()
+        word = "rise" if change >= 0 else "fall"
+
+        def signed(v):
+            s_ = explain.fmt(abs(v), unit)
+            if unit == "EUR" and abs(v) >= 1000:
+                s_ = f"€{abs(v) / 1000:.1f}k"
+            return ("+" if v >= 0 else "−") + s_
+        for p in top:
+            p["sharePct"] = round(p["contribution"] / change * 100, 1) if change else None
+        sentences = [f"{p['value']} drove {signed(p['contribution'])} of the {signed(change)} {word} in {label}." for p in top[:3]]
+        return {"measure": m, "by": by, "dataset": ds["name"], "periodA": ra["period"], "periodB": rb["period"],
+                "totalA": round(total_a, 2), "totalB": round(total_b, 2), "change": change, "contributions": top,
+                "sentences": sentences, "caption": sentences[0] if sentences else "No change to explain."}
 
     def _explain_result(self, s, a):
         return explain.run(s["result"])

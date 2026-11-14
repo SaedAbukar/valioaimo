@@ -77,6 +77,17 @@ def run(result: dict, spec: dict | None = None) -> dict:
             else:
                 avg = sum(r[m] for r in vals) / len(vals)
                 facts.append(f"Average: {fmt(avg, unit)}.")
+    if shape.get("timeDim") and dims:
+        key = dims[0]
+        odd = [r for r in rows if r.get("is_anomaly")]
+        fut = [r for r in rows if r.get("is_forecast")]
+        if odd:  # unusual periods first: they are why someone asked
+            r = max(odd, key=lambda x: abs(x.get(f"{m}_z") or 0))
+            facts.insert(0, f"Unusual: {label_of(key, r[key])} ({fmt(r[m], unit)}), far from the months before it.")
+        if fut:
+            a_, b_ = fut[0], fut[-1]
+            facts.insert(0, f"Forecast: about {fmt(b_[m], unit)} by {label_of(key, b_[key])} (likely {fmt(b_[m + '_lo'], unit)}–"
+                            f"{fmt(b_[m + '_hi'], unit)}), from the same months last year and the recent trend.")
     while len(facts) < 3:
         facts.append(f"{len(rows)} rows from {period_label(result['period'])}.")
     return {"caption": caption, "facts": facts[:3]}
