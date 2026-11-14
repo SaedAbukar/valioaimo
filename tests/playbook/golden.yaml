@@ -1,0 +1,104 @@
+# Golden scenarios — replayed through the playbook on a fresh gateway.
+# Each step is a chat message or a card action; `expect` checks the cards the
+# step produced and the session state. A playbook change must keep these green;
+# new lessons become new scenarios (docs/PLAYBOOK.md).
+scenarios:
+  - id: s1_milk
+    title: 1,000 L lactose-free milk by Monday — favourite short, split with a second brand, tell me
+    buyer: BUY-POHJOLA
+    steps:
+      - say: "I need 1,000 L lactose-free milk by Monday"
+        expect:
+          cards: [understood, favourites, basket]
+          recall: {gaps: [], sources: {"lactose-free milk": favourites}}
+          decision: tell_me
+          total: 1304.40
+          lines:
+            - {name: "Lactose-free semi-skimmed milk drink 1.5% 1 L", qty: 640, source: favourites}
+            - {name: "Lactose-free semi-skimmed milk 1.5% 1.5 L", qty: 360, source: similar_orders}
+          tools_skipped: [request_offers]
+      - action: order
+        expect: {cards: [delivery], status: ordered}
+
+  - id: s2_gala
+    title: Gala for 180 — recall last gala, learned use, leftovers, order
+    buyer: BUY-POHJOLA
+    steps:
+      - say: "Gala dinner for 180 on Saturday 21.11.: salmon starter, beef tenderloin, chocolate mousse. 12 vegan, 8 gluten-free, 1 nut allergy."
+        expect:
+          cards: [understood, favourites, basket]
+          favourites_text_contains: "Spring gala 2026"
+          decision: tell_me
+          max_total: 3300
+          leftovers_used: ["whipping cream"]
+          adjusted: ["salmon fillet", "beef tenderloin"]
+          safe_for: {nut: "nut-free dark chocolate"}
+      - action: order
+        expect: {cards: [delivery], status: ordered}
+
+  - id: s3_new_kitchen
+    title: New kitchen, no history — full discovery on real Valio Aimo products, product choice
+    buyer: BUY-UUSI
+    steps:
+      - say: "100 L milk by Wednesday"
+        expect:
+          cards: [understood, choice]
+          recall: {gaps: ["milk"]}
+          options: 3
+          real_products: true
+      - action: pick
+        option: 1
+        expect: {cards: [basket], decision: tell_me}
+      - action: order
+        expect: {cards: [delivery], status: ordered}
+
+  - id: s4_allergen
+    title: Allergen conflict — the only other oat drink may contain nuts -> Can't do this + safe alternative
+    buyer: BUY-KOULU
+    steps:
+      - say: "60 L oat drink by Monday"
+        expect:
+          cards: [understood, favourites, cant_do]
+          cant_do_text_contains: "may contain nuts"
+          alternative_contains: "Soy drink"
+          no_tool: [place_order, request_approval]
+      - action: use_alternative
+        expect: {cards: [basket, needs_ok], decision: needs_ok, lines: [{name: "Soy drink, calcium-enriched 1 L", qty: 60}]}
+
+  - id: s5_guest_change
+    title: Guest change — now 200 guests -> rescale -> needs OK (over the event limit)
+    buyer: BUY-POHJOLA
+    steps:
+      - say: "Gala dinner for 180 on Saturday 21.11.: salmon starter, beef tenderloin, chocolate mousse. 12 vegan, 8 gluten-free, 1 nut allergy."
+        expect: {decision: tell_me}
+      - action: order
+        expect: {status: ordered}
+      - say: "now 200 guests"
+        expect:
+          cards: [understood, basket, needs_ok]
+          decision: needs_ok
+          min_total: 3300
+          needs_ok_text_contains: "over your limit"
+      - action: send_for_ok
+        expect: {status: waiting, board: waiting}
+      - action: approve
+        expect: {cards: [delivery], status: ordered, board: ordered}
+
+  - id: s6_learn
+    title: After the event — How did it go? -> labels -> next gala gets a tip
+    buyer: BUY-POHJOLA
+    steps:
+      - say: "Gala dinner for 180 on Saturday 21.11.: salmon starter, beef tenderloin, chocolate mousse. 12 vegan, 8 gluten-free, 1 nut allergy."
+        expect: {no_card: [tip]}
+      - action: order
+      - action: delivered
+        expect: {cards: [how_did_it_go], board: delivered}
+      - action: save_usage
+        entries: {"whipping cream": some}
+        expect: {cards: [tip], status: done, labels: [over_ordered, right_sized]}
+      - say: "Gala dinner for 150 on 12.12.: salmon starter, beef tenderloin, chocolate mousse."
+        expect:
+          cards: [understood, favourites, tip, basket]
+          tip_text_contains: "whipping cream"
+      - action: apply_tip
+        expect: {cards: [basket], cream_less: true}

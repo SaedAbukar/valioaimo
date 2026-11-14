@@ -16,3 +16,20 @@
 - **Keys** are generated at start (server) or page load (MVP) and never written to the repository.
 - **Backend scope** was reduced to a reference skeleton after the priority change (architecture, UX and problem-solving first); the MVP page carries the full logic.
 - **Microphone** is blocked inside the artifact sandbox; the page shows a labelled simulated transcript instead.
+
+## v2 (14 Nov 2026)
+
+- **Two assortments.** The seeded customers (Pohjola, Kaari, Kaarela) keep the curated demo assortment so the golden scenarios are repeatable. The new kitchen (Kahvila Uusi, `assortment: aimo`) and any need the curated set lacks use the **real Valio Aimo product data**. Real product names are never attached to synthetic allergen or stock facts.
+- **Mock API live (14 Nov, 09:55).** Key in `.env` (git-ignored). Real products use live price and availability; demo values (median price of the need kind × 0.85–1.2 by product id) are only a fallback when the API fails. The portal password was not used by the agent. Ample stock (999999 / 9999999999) is capped at 100,000 sales units.
+- **Understood card does not block.** When nothing critical is missing, the assistant continues straight to Recall and Plan; "Looks right" is an acknowledgement and "Change" lets the chef correct it in words.
+- **Basket needs a tap.** Even for "auto" and "tell me", the chef taps Order. Agents calling the API may order directly when Check allows it.
+- **Recall order** is fixed: favourites → similar past orders → learned quantities → standing orders → leftovers. Standing orders are shown, not netted (they are separate deliveries).
+- **A past event "went well"** when ≥ 60 % of its lines are `right_sized`/`good_substitute` and none `under_ordered`.
+- **Learning:** learned per-guest factors only from `right_sized` lines (median of last 3, needs ≥ 2, clamped 0.6–1.15, ignored within ±5 %). Three `over_ordered` in a row → Tip (cut rounded to 5 %, between 5 and 30 %).
+- **How did it go?** Used it all = 97 % used (`right_sized`), Some left = 82 % (`over_ordered`), Ran out = 110 % (`under_ordered`).
+- **Weekly restock.** Fixture stock is restocked weekly to its starting level for planning further ahead; a guest change releases the earlier order's stock before re-planning.
+- **Event limit** stays €3,300 for Pohjola: 180 guests ≈ €3,205 (tell me), 200 guests ≈ €3,329 (needs OK).
+- **Can't do this** fires when nothing of the requested kind is safe and on time and an allergen removed the only other candidate; the safe alternative is the best on-time product of the same group.
+- **Product choice** appears only for needs with no memory (new kitchen or new item) and at least two on-time options; for orders ≥ 150 packs, tiny packs are skipped.
+- **Delivery window** is shown as "in the morning"; the mock API's `closingTime` is not shown yet.
+- **Offline page** plays recorded gateway runs (`scripts/record_replays.py`); typed text it has no recording for gets the example requests as tap answers.

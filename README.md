@@ -1,67 +1,81 @@
-# Aimo Agent Gateway
+# Aimo Agent Gateway — Valio Aimo challenge, Junction 2026
 
-**Junction 2026 · Valio Aimo challenge.** A prototype of the *interface and operating model* that lets an external purchasing agent find products, compare signed offers and order at fixed prices with the right human approval — on open, verifiable standards, without exposing Valio Aimo's real systems or data.
+A chef types or says what they need. A purchasing agent works it out through a
+**playbook the gateway enforces**, and the answer comes back as a few simple cards.
 
-> **Live clickable MVP:** https://claude.ai/artifact/4PYHao2tm2PPmvCVTekwTp (self-contained page, works on a phone, opens with the gala example already run). Minimal Material 3: Autopilot · Orders · Insights · Settings. All data is synthetic; brands and suppliers are fictional.
+> "Gala dinner for 180 on Saturday: salmon starter, beef tenderloin, chocolate mousse.
+> 12 vegan, 8 gluten-free, 1 nut allergy."
+> → What I understood → Same as your Spring gala, it went well → Basket €3,205 (€17.80 per guest) → Ordered.
 
-![Autopilot](docs/screenshots/autopilot-1280-light.png)
+**The agent proposes; the gateway decides.** The agent recalls the kitchen's own
+memory first, discovers only for gaps, and the gateway runs the checks (signed
+offers, spending limits, allergens, delivery dates) before anything is ordered.
 
-## What it solves
-
-| Organisers' question | Our answer | Where to see it |
-| --- | --- | --- |
-| Structured product / price / availability lookup | GS1-keyed catalog (L0, browse-only) + **signed Offer Attestations** (W3C VC 2.0 as JWS ES256, price fixed 15 min, stock fresh 5 min) | Autopilot → order → Products → *Signed offer* |
-| Inquiry → commitment at fixed prices | Checkout re-verifies every offer and returns `offer_expired` / `price_changed` instead of charging differently | Demo scenario X1 |
-| Permission & human approval | Signed **Intent Mandate** (named human) + deterministic **policy engine** (R0–R14, V1–V3; BLOCK > APPROVE > NOTIFY > AUTO); one consolidated approval card | Settings › Mandate; Orders → Waiting for approval |
-| Partial availability, good-better-best | BEST/BETTER/GOOD with one-line trade-offs; up to 3 plans (split products / substitute / split dates), case rounding explicit | Agent → S2 |
-| Human-readable audit trail | Append-only SHA-256 hash chain, templated sentences with rule ids, buyer vs Valio Aimo view, tamper test | Order detail; Settings › Audit log |
-| Least manual correction | **Event Autopilot** (text or voice → brief → recipes → right-sized basket → one decision), learning from outcomes, evidence-backed recommendations | Autopilot, Insights |
-
-## Run locally
+## Run it
 
 ```bash
-python3 -m pip install -r requirements.txt   # starlette, uvicorn, pydantic, PyJWT[crypto], pyyaml, pytest
-make run          # or: python -m gateway  → http://127.0.0.1:8000 (serves the MVP + reference endpoints)
-make test         # pytest: planner worked example, policy rules, trust checks, audit tamper, preferences
-make build        # rebuild ui/dist/index.html from ui/src (inline CSS/JS/data/icons)
+make setup      # .venv + requirements (Python 3.11+)
+make run        # records demo runs, builds ui/dist, serves http://127.0.0.1:8000
+make test       # 118 tests, incl. the six golden playbook scenarios
+make mcp        # the same tools over MCP (stdio)
 ```
 
-The MVP page needs no server: open `ui/dist/index.html` directly. Optional real-API adapter: set `AIMO_BASE_URL` and `AIMO_API_KEY` (see `.env.example`); fixtures are used otherwise.
-
-## Demo walkthrough (Settings › Demo scenarios, 13 steps)
-
-The UI has four destinations — **Autopilot · Orders · Insights · Settings** — in a minimal Material 3 design (turquoise, white, sky blue). One input handles both events and plain orders; details open in bottom sheets. See `docs/UX.md`.
-
-| Step | Scene | What happens | Judging criterion |
-| --- | --- | --- | --- |
-| S0 | **Event Autopilot** | “Gala dinner on Saturday the 21st for 180 guests: salmon starter, beef tenderloin with potato gratin, chocolate mousse, breakfast for 60 the next morning. 12 vegans, 8 gluten-free, one nut allergy.” → brief, diet variants, 32-line basket right-sized from history, 3 leftover lots netted, 37 signed offers, 2 deliveries, prep timeline → **ordered automatically (NOTIFY)** | End-to-end demo; least manual correction |
-| S0+ | Guests → 200 | Whole basket re-scales with a delta table; event budget exceeded → **one** approval card | Autonomy & controls |
-| S1 | Happy path | 1,000 L lactose-free milk, stock sufficient → AUTO | Autonomy |
-| S2 | Partial stock | Preferred milk 640 L: P1 640+360 split (NOTIFY R4/R6, €1,304.40), P2 whole milk (APPROVE R5, €1,410), P3 later date (APPROVE R7, €1,290) | Matching need; robustness |
-| S3 | Last-minute event | €3,418 multi-line order > €2,000 limit → approve 5 lines, reject the beef; override logged by name | Controls |
-| S4 | Hospital, milk- & nut-free | Oat drink out of stock; nut drinks and “may contain nuts” filtered; soy → APPROVE R5; forced almond → **R1 BLOCK** | Robustness |
-| S5 | Standing-order drift | +22 % vs 8-week median → R10 pauses auto-renew | Controls |
-| X1 | Expired offer | 16 min pass and the price moves → `price_changed`; agent re-quotes; order at the new signed price | Trust |
-| T | Tamper test | Edit one audit row → verification pinpoints the break | Openness |
-| S6 | Learning → mandate | Apply “silent in-tolerance dairy swaps” (evidence n=5) → signed mandate v2 → S2 re-runs as **AUTO** | Least manual correction |
-| S7 | Customise | Preset *Domestic & sustainable* + pin Maitokaari → ranking and choice change with visible reasons | Matching need |
-| S8 | Event loop | Record usage (prefilled, one tap) → report: used / reused / wasted, CO₂e est., labels → next gala right-sized, leftovers netted | Waste, least correction |
-| OPS | Valio Aimo ops | Decision mix, latency, blocked requests, demand & waste signals, per-agent kill switch (V3) | Production path |
-
-## Repository
+Put the Valio Aimo mock API in `.env` (never committed):
 
 ```
-ui/src/            engine.js (planner, policy, trust, audit), flows.js (agent, approvals, history, insights, autopilot), ui.js (screens), styles.css (tokens)
-ui/dist/index.html the self-contained MVP (also the published artifact)
-gateway/           Python reference core: catalog, preferences, planner, policy + rules.yaml, trust, audit, signals, core, thin server
-gateway/data/      catalog.json (97 products), buyers.json (3 buyer orgs), recipes.json (45 dishes)
-tests/             pytest (27 tests)
-docs/              ARCHITECTURE, UX, PROBLEM_SOLUTION, EVENT_AUTOPILOT, DATA_MODEL (+ data-model/ DDL & ER), API, STANDARDS, ROADMAP, ASSUMPTIONS, screenshots/
+AIMO_BASE_URL=https://junction26.valioaimo.fi
+AIMO_API_KEY=<key from the Junction platform>
 ```
 
-## Known gaps (honest list)
+Without a key everything works on demo prices; `GET /health` shows whether the live API is reachable.
+`ui/dist/index.html` also works with no server: it plays recorded gateway runs.
 
-- The Python backend is a **reference skeleton** (core logic + thin server); the full REST/MCP surface is specified in `docs/API.md` and implemented client-side in the MVP. Not load-tested.
-- Speech input uses the browser's Web Speech API; the artifact sandbox blocks the microphone, so the page offers a clearly labelled sample voice request.
-- Prices, stock, history, weather/occupancy context and CO₂e factors are synthetic. The organisers' mock API was not reachable from the build sandbox; the adapter is ready for it.
-- Keys are generated per page load / server start (demo only); production uses did:web, HSM-held keys and a status list.
+## What is in here
+
+| Part | Where |
+|---|---|
+| Playbook (steps 0–8, tools, schemas, guards, wording rules) | [`gateway/playbook/order_playbook.v1.yaml`](gateway/playbook/order_playbook.v1.yaml) · [docs/PLAYBOOK.md](docs/PLAYBOOK.md) |
+| State machine (409 `step_not_allowed`, schema checks, audit) | [`gateway/playbook/engine.py`](gateway/playbook/engine.py) |
+| Steps | `understand.py` (EN/FI) · `recall.py` · `discover.py` · `menu.py` · `tools.py` · `cards.py` |
+| Rules and trust (reused from v1) | `gateway/policy.py`, `gateway/rules.yaml`, `gateway/trust.py` (W3C VC 2.0 + ES256 offers), `gateway/audit.py` (hash chain) |
+| Real Valio Aimo data | 17,546 products indexed in `gateway/data/aimo_products.json` (`make index`), mock API client in `gateway/adapter.py` · [docs/MOCK_API_NOTES.md](docs/MOCK_API_NOTES.md) |
+| REST and MCP | `gateway/__main__.py`, `gateway/mcp_server.py` |
+| Chat-first app | `ui/src/` → `ui/dist/index.html` · [docs/UX.md](docs/UX.md) |
+| Golden scenarios | [`tests/playbook/golden.yaml`](tests/playbook/golden.yaml) |
+| Architecture, data model, standards | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/data-model/](docs/data-model/), [docs/STANDARDS.md](docs/STANDARDS.md) |
+| Decisions and assumptions | [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md), [PROGRESS.md](PROGRESS.md) |
+
+## Orders, insights and kitchens (v3)
+
+- **Orders like Jira:** board or list, keys, event colours, swimlanes, search and quick filters, a year of past orders, an activity timeline per order.
+- **Insights:** *Your year*, a Wrapped-style story of the kitchen's year; *Explore*, ask in words or filter and get a chart, a caption and three facts.
+- **Kitchens:** a CRM-style view of every site with KPIs and sparklines.
+- **Insight playbook** ([gateway/analytics/insight_playbook.v1.yaml](gateway/analytics/insight_playbook.v1.yaml)): describe → query → suggest → chart → explain, simple enough for a small model. `GET /v1/tools` lists every tool for the whole journey.
+
+## API for agents
+
+```
+GET  /v1/playbook                         the playbook
+POST /v1/sessions                         {buyerId} -> sessionId, next_allowed_tools
+POST /v1/sessions/{id}/tools/{tool}       run one step's tool
+GET  /v1/sessions/{id}                    outputs per step
+POST /v1/approvals/{id}                   human approver {ok, by}
+GET  /v1/audit?sessionId=…                hash-chained log, verified
+GET  /v1/tools                            every tool of both playbooks, in order
+POST /v1/insights/sessions                {buyerId} -> analysis session
+POST /v1/insights/sessions/{id}/tools/{tool}   describe_data, run_query, build_chart, …
+POST /v1/insights/ask                     {buyerId, prompt, filters} -> chart + caption + facts
+```
+
+## The six golden scenarios
+
+1. **Milk** — 1,000 L lactose-free by Monday: favourite covers 640 L, the rest from last time's good stand-in; ordered, "I'll keep you posted".
+2. **Gala for 180** — recalls the last gala, learned use for salmon and beef, leftover cream used first, nut-free dessert for the allergy; ordered.
+3. **New kitchen** — no history, so discovery on real Valio Aimo products and a product choice.
+4. **Allergen conflict** — the only other oat drink may contain nuts: "Can't do this" with a safe alternative.
+5. **Guest change** — "now 200 guests": rescaled, over the event limit, needs an OK, then the order is updated.
+6. **After the event** — "How did it go?" → labels → the next gala gets a tip to order less cream.
+
+Screenshots: [docs/screenshots/v2](docs/screenshots/v2).
+
+The challenge data is used only for Junction 2026, as the organisers require.

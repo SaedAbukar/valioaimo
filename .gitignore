@@ -1,6 +1,13 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-.env
 *.db
+/data/
+data_raw/
 node_modules/
+.venv/
+.env
+
+# organiser dataset (Junction use only): rebuild with `make index`
+gateway/data/aimo_products.json
+.superpowers/

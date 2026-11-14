@@ -69,7 +69,11 @@ def plan_line(ctx: dict, req: dict, need_by: date, choice: str | None = None, us
     buyer, mandate, profile, signals = ctx["buyer"], ctx["mandate"], ctx["profile"], ctx.get("signals")
     be, today = ctx["backend"], ctx["today"]
     need = catalog.resolve_need(req["text"])
-    excl_all = set(mandate["hardExclusions"]["allergens"]) if mandate else set()
+    if req.get("candidates"):  # Discover step supplied the candidate set (e.g. real Valio Aimo products)
+        first = catalog.by_gtin(req["candidates"][0])
+        need = dict(need, candidates=list(req["candidates"]), variants=[],
+                    kind=first["kind"], kindLabel=catalog.KIND_LABELS.get(first["kind"], first["kind"]))
+    excl_all = (set(mandate["hardExclusions"]["allergens"]) if mandate else set()) | set(req.get("excludeAllergens", []))
     diet_req = set(need["diet"]) | (set(mandate["hardExclusions"]["diet"]) if mandate else set())
     hab = sig.habitual(buyer, need["kind"]) if need["kind"] else None
     qty_req = float(req["qty"])

@@ -15,7 +15,8 @@ in the old chat is required.
 | Plan document | "Valio Aimo Agent Gateway – Junction 2026 Plan & Build Prompt" | Claude Docs artifact: https://claude.ai/artifact/UC1kBreE8Np4zcnDyhkvtB (user's Claude account) |
 | Current clickable MVP (v1, will be replaced) | "Aimo Agent Gateway" | Artifact: https://claude.ai/artifact/4PYHao2tm2PPmvCVTekwTp ; source `ui/src/`, built file `ui/dist/index.html` |
 | Progress log of the v1 build | `PROGRESS.md` | repo root |
-| Challenge brief | "Valio Aimo challenge" text | Summarised in §2; original was pasted by the user |
+| Challenge brief | "Valio Aimo challenge" text | `docs/CHALLENGE_BRIEF.md` (~/Code/valioaimo/docs on the Mac) — full brief, insights, scenarios, judging; no credentials |
+| Plan document (markdown) | same plan as the Claude Docs link | `docs/PLAN.md` (~/Code/valioaimo/docs on the Mac); HANDOFF §4 overrides it for v2 |
 | Valio Aimo resource portal | Junction 2026 Valio Aimo portal | https://junction26.valioaimo.fi/ — password is in the challenge brief (ask the user; never commit it) |
 | Mock API base URL + key | `AIMO_BASE_URL`, `AIMO_API_KEY` | **User will provide the endpoint.** Key is in the challenge brief. Put both in `.env` (see `.env.example`); never commit |
 

@@ -1,8 +1,19 @@
-run:
-	python3 -m gateway
+PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
+
+run: build
+	$(PY) -m gateway
 
 test:
-	python3 -m pytest -q tests
+	$(PY) -m pytest -q tests
 
 build:
-	python3 scripts/gen_catalog.py && python3 ui/build.py
+	$(PY) scripts/record_replays.py && $(PY) ui/build.py
+
+index:
+	$(PY) scripts/build_aimo_index.py
+
+mcp:
+	$(PY) -m gateway.mcp_server
+
+setup:
+	python3 -m venv .venv && .venv/bin/pip install -r requirements.txt

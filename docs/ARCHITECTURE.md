@@ -163,3 +163,50 @@ Production deployment sketch: stateless gateway pods behind an API gateway; Post
 | ADR-7 | Preference profile separate from mandate, referenced by version | Preferences inside mandate | Mandate = authority (rarely changes); preferences = taste (often changes) |
 | ADR-8 | Event Autopilot as a deterministic pipeline over the same planner/policy | Free-form LLM shopping list | Same guardrails; every quantity has a why |
 | ADR-9 | MVP logic client-side in one page; Python core as reference | Server-only demo | Demo must run on a phone without localhost |
+
+## 9. v2: the playbook rails and the chat-first app
+
+Since v2 every agent works through a **versioned playbook** enforced by the gateway.
+
+```mermaid
+flowchart LR
+  chef([Chef: chat / voice]) --> app[Chat-first app<br/>ui/dist/index.html]
+  app -->|POST /v1/chat| asst[Built-in chef assistant<br/>playbook/agent.py]
+  ext[Any external agent<br/>Claude · GPT · Gemini · script] -->|REST /v1/sessions/*/tools/*<br/>or MCP| eng
+  asst --> eng[[Playbook state machine<br/>playbook/engine.py<br/>order_playbook.v1.yaml]]
+  eng --> s1[1 Understand<br/>understand.py]
+  eng --> s2[2 Recall<br/>recall.py + history.json]
+  eng --> s3[3 Discover<br/>discover.py]
+  eng --> s4[4 Plan<br/>planner.py + menu.py]
+  eng --> s5[5 Check<br/>trust.py + policy.py + rules.yaml]
+  eng --> s6[6 Present<br/>cards.py + lint]
+  eng --> s7[7 Act / 8 Learn<br/>tools.py]
+  eng --> L[(audit_event<br/>hash chain + playbook version)]
+  s3 --> idx[(Valio Aimo product index<br/>17,546 products)]
+  s3 --> api[Mock API<br/>/api/price · /api/availability]
+```
+
+- **One state machine, three facades.** The chat assistant, REST and MCP all call
+  `Engine.call(session, tool, args)`. Order is enforced there: out-of-order → 409
+  `step_not_allowed` with `next_allowed_tools`; wrong output shape → 422.
+- **Check is gateway-run.** `check_basket` is audited as `system:gateway`; Act only
+  accepts what Check decided (auto / tell me directly, needs OK after an approval).
+- **Rewinds.** Chef changes go back to the right step (new guest count → Understand;
+  pick, tip or safe alternative → Plan) and everything downstream runs again.
+- **Two assortments, one shape.** Seeded customers use the curated demo assortment
+  (repeatable golden tests). Kitchens on the live assortment, and needs the curated
+  set lacks, use the real Valio Aimo product data, bridged into the planner's product
+  shape (`discover.bridge`) with live price and availability when the API key is set.
+- **Replayable.** Each call is an `audit_event` with step, playbook version, inputs
+  and duration; the golden scenarios in `tests/playbook/` replay whole runs.
+- **Data model.** Sessions map to `purchase_process` (`process_id` = session id,
+  `tool_call_count`), outcome labels to `outcome_label`, audit to `audit_event`.
+  Storage in the MVP is in-memory + SQLite for the audit chain.
+
+| ADR | Decision | Why |
+|---|---|---|
+| ADR-10 | Versioned playbook file + server-side state machine | Any agent vendor can follow it; refinements are diffs to one file guarded by golden tests |
+| ADR-11 | Recall before Discover; Discover locked without gaps | Least manual correction: start from what the kitchen already trusts; fewer API calls |
+| ADR-12 | Answers as linted cards | Plain language is enforced, not hoped for |
+| ADR-13 | Learn silently only from right-sized runs; ask (Tip) after repeated over-ordering | Chefs stay in control of changes they did not ask for |
+| ADR-14 | Recorded gateway runs for the offline page | The artifact shows real gateway output without a server |

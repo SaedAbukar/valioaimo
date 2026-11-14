@@ -60,8 +60,17 @@ def _idx():
     return by_gtin, by_key
 
 
+_REAL: dict[str, dict] = {}  # real Valio Aimo products bridged in by the Discover step (see register_real)
+
+
 def by_gtin(gtin: str) -> dict | None:
-    return _idx()[0].get(gtin)
+    return _idx()[0].get(gtin) or _REAL.get(gtin)
+
+
+def register_real(p: dict) -> dict:
+    """Make a real Valio Aimo product (curated shape, see playbook.discover.bridge) visible to planner and policy."""
+    _REAL[p["gtin"]] = p
+    return p
 
 
 def by_key(key: str) -> dict | None:

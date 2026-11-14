@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {"name": "aimo", "runtimeExecutable": "make", "runtimeArgs": ["run"], "port": 8000},
+    {"name": "aimo-offline", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "8090", "--directory", "ui/dist"], "port": 8090}
+  ]
+}

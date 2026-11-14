@@ -52,3 +52,44 @@ The UI/UX is too bloated, too "AI-looking" and messy. Next run must:
   4. Finnish parser: "lauantaina 21.11.", "ensi perjantaina", "huomenna", hengelle/henkilölle/vieraalle, vegaani(a), gluteeniton/-tonta, laktoositon/-tonta, keliaakikko, pähkinä-/kala-allergia(kko); brief gets lang 'fi' and the card shows "la 21.11. · 120 hengelle · noutopöytä", menu shows the Finnish dish word. Tests: tests/js/parser.test.js (6 cases, EN+FI) run via pytest (tests/test_js_parser.py) → 28 passed.
   5. Phone Autopilot: after planning the input collapses to a one-line field (tap to edit); card numbers + status/order/primary action above the fold at 390×844.
   6. Bug: event card lost its order/usage rows after reconciliation; now shows "Done · usage recorded". 13 scenarios re-run OK; 65 screenshots regenerated.
+
+---------------------------------------------------------------------------
+# v2 — chat-first app on playbook rails (session 2, 14 Nov 2026)
+
+Repo now lives in `~/Code/valioaimo` (extracted from `aimo-agent-gateway_1.zip`). Python env: `.venv` (starlette, uvicorn, pydantic, PyJWT, cryptography, PyYAML, jsonschema, mcp 2.x, pytest).
+
+## Milestones
+- [x] Real Valio Aimo data: `scripts/build_aimo_index.py` -> `gateway/data/aimo_products.json` (17,546 products, allergens, diet claims, CO2e, delivery reliability, substitutions). Raw files in `data_raw/` (git-ignored).
+- [x] Mock API adapter: `AimoApiClient` (POST /api/price, /api/availability, X-API-Key, batches ≤1000, 5-min cache, fixture fallback). `.env` has `AIMO_BASE_URL`; Key received 14 Nov 09:55 and set in `.env`; live API verified (see below).
+- [x] Playbook `gateway/playbook/order_playbook.v1.yaml` + state machine `engine.py` (409 step_not_allowed, JSON Schema outputs, audit per call with version and ms).
+- [x] Steps: understand.py (EN/FI parser), recall.py (5 sources in order), discover.py (curated + real products bridge), menu.py (event -> ingredients), tools.py (all tools), cards.py (cards + plain-language lint), agent.py (built-in chef assistant, board), insights.py.
+- [x] REST (`gateway/__main__.py`) and MCP (`gateway/mcp_server.py`, 21 tools) over the same engine.
+- [x] Golden scenarios `tests/playbook/golden.yaml` (6) + rail tests -> `pytest` 46 passed.
+- [x] Chat-first UI: ui/src/{index.html,styles.css,app.js} -> ui/dist/index.html (served) + ui/dist/artifact.html; live mode via /v1/chat, offline mode plays recorded gateway runs (ui/src/replays.json). v1 UI moved to ui/legacy-v1/.
+- [x] Checked in the built-in browser (1280 light/dark, 390 dark): guest change -> needs OK -> board -> approve -> delivered -> How did it go -> tip on next gala.
+- [x] 60 screenshots: docs/screenshots/v2 (scripts/screenshots.py, Playwright; all six scenarios run from the chat at 390/1280 × light/dark).
+- [x] Published v2 artifact: https://claude.ai/artifact/WemSdQFg5vy35Ki2YkeAbi (file ui/dist/artifact.html; republish the same path to update).
+- [x] Docs: PLAYBOOK.md, UX.md (rewritten), ARCHITECTURE.md §9, MOCK_API_NOTES.md, README.md, ASSUMPTIONS.md (v2).
+
+## Remaining gaps
+- LLM parsing step behind parse_request (schema is ready) is not built; parsing is pattern-based EN/FI.
+- State is in memory (audit chain in SQLite :memory:); schema.sql tables are the target, no Postgres wiring.
+- Curated assortment allergens/stock are synthetic; only the new-kitchen path uses real products.
+- Tips on the Insights page are not wired back to the next plan (the chat Tip card is).
+- Order cut-off time (closingTime) and delivery tracking are not shown yet.
+
+## Live mock API (14 Nov 2026, 09:55)
+- Key in `.env`; `/api/ping` 200; `/health` liveApi.reachable true.
+- Found: Cloudflare blocks Python's default User-Agent (403) -> client sends `aimo-agent-gateway/0.2`.
+- Adapter now batches price + availability per gap, takes unit/pack content from comparisonPrice, drops undeliverable products, handles 999999 / 9999999999 / 0-without-date.
+- New-kitchen flow verified in the app on live prices (2 API calls). Tests: 56 passed (new tests/playbook/test_live_bridge.py, no network).
+- Observations written to docs/MOCK_API_NOTES.md. Replays re-recorded with live prices; artifact republished.
+
+## v3 — Jira orders, Wrapped + Explore insights, CRM kitchens (14 Nov 2026)
+Design: docs/superpowers/specs/2026-11-14-v3-orders-insights-kitchens-design.md · Plan: docs/superpowers/plans/2026-11-14-v3-orders-insights-kitchens.md
+- [x] A year of history (Dec 2025 – Nov 2026): 1,280 orders, 21,235 lines, 86 events, 6 sites; generated in 0.1 s, seeded (gateway/analytics/store.py).
+- [x] Insight playbook + engine (409/422 with fix hints, audit), query compiler, 17 chart types (Vega-Lite), explainer.
+- [x] Analyst: Claude Haiku 5.5 tool loop when ANTHROPIC_API_KEY is set, rule engine otherwise (no key on this machine: Claude path not run live).
+- [x] REST: /v1/tools, /v1/insights/*, /v1/orders/history(/id), /v1/orders/{id}/activity, /v1/kitchens. MCP: 31 tools.
+- [x] UI: ui/src/orders.js, insights.js, kitchens.js; M3 tokens + state layers; validated chart palette.
+- [x] Tests: 118 passed. Checked in the browser at 1280 (light, dark) and 390; offline build checked on a static server.

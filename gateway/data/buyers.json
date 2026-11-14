@@ -324,7 +324,9 @@
     "agentId": "agent:pohjola-buyer-01",
     "limits": {
      "perOrderEUR": 2000,
-     "perMonthEUR": 45000
+     "perMonthEUR": 45000,
+     "perEventEUR": 3300,
+     "perGuestEUR": 26
     },
     "allowedCategories": [
      "dairy",
@@ -355,7 +357,34 @@
      "avoidSuppliers": []
     },
     "validDays": 90
-   }
+   },
+   "assortment": "demo",
+   "sites": [
+    {
+     "id": "SITE-POH-HKI",
+     "name": "Pohjola Helsinki",
+     "type": "Central kitchen · hotel restaurant",
+     "address": "Mannerheimintie 12, Helsinki",
+     "scale": 1.0,
+     "lead": "Jari Lehtonen"
+    },
+    {
+     "id": "SITE-POH-TRE",
+     "name": "Pohjola Tampere",
+     "type": "Hotel restaurant",
+     "address": "Hämeenkatu 5, Tampere",
+     "scale": 0.7,
+     "lead": "Aino Mäkelä"
+    },
+    {
+     "id": "SITE-POH-TKU",
+     "name": "Pohjola Turku",
+     "type": "Hotel restaurant + events",
+     "address": "Aurakatu 8, Turku",
+     "scale": 0.55,
+     "lead": "Mikko Salo"
+    }
+   ]
   },
   {
    "id": "BUY-KAARI",
@@ -471,7 +500,9 @@
     "agentId": "agent:kaari-diet-01",
     "limits": {
      "perOrderEUR": 1500,
-     "perMonthEUR": 12000
+     "perMonthEUR": 12000,
+     "perEventEUR": 2500,
+     "perGuestEUR": 15
     },
     "allowedCategories": [
      "dairy",
@@ -508,7 +539,18 @@
      "avoidSuppliers": []
     },
     "validDays": 90
-   }
+   },
+   "assortment": "demo",
+   "sites": [
+    {
+     "id": "SITE-KAARI-01",
+     "name": "Kaari Hospital central kitchen",
+     "type": "Patient meals",
+     "address": "Sairaalakatu 1, Espoo",
+     "scale": 1.0,
+     "lead": "Hanna Rinne"
+    }
+   ]
   },
   {
    "id": "BUY-KOULU",
@@ -619,7 +661,9 @@
     "agentId": "agent:kaarela-school-01",
     "limits": {
      "perOrderEUR": 2500,
-     "perMonthEUR": 15000
+     "perMonthEUR": 15000,
+     "perEventEUR": 3000,
+     "perGuestEUR": 8
     },
     "allowedCategories": [
      "dairy",
@@ -654,7 +698,107 @@
      "avoidSuppliers": []
     },
     "validDays": 90
-   }
+   },
+   "assortment": "demo",
+   "sites": [
+    {
+     "id": "SITE-KOULU-01",
+     "name": "Kaarela production kitchen",
+     "type": "School meals · 12 schools",
+     "address": "Kaarelantie 20, Helsinki",
+     "scale": 1.0,
+     "lead": "Sanna Koskinen"
+    },
+    {
+     "id": "SITE-KOULU-02",
+     "name": "Kannelmäki school kitchen",
+     "type": "School meals · 4 schools",
+     "address": "Vanhaistentie 3, Helsinki",
+     "scale": 0.4,
+     "lead": "Petri Ahola"
+    }
+   ]
+  },
+  {
+   "id": "BUY-UUSI",
+   "name": "Kahvila Uusi",
+   "segment": "New café kitchen (opened this week)",
+   "assortment": "aimo",
+   "site": {
+    "id": "SITE-UUSI-01",
+    "name": "Kahvila Uusi kitchen"
+   },
+   "creditLimitEUR": 8000,
+   "openInvoicesEUR": 0,
+   "monthToDateEUR": 0,
+   "admin": {
+    "id": "usr-mnieminen",
+    "name": "Mira Nieminen",
+    "role": "Owner"
+   },
+   "approvers": [
+    {
+     "id": "usr-mnieminen",
+     "name": "Mira Nieminen",
+     "role": "Owner"
+    }
+   ],
+   "agents": [
+    {
+     "id": "agent:uusi-buyer-01",
+     "name": "Kahvila Uusi purchasing agent",
+     "apiKey": "demo-key-uusi"
+    }
+   ],
+   "history": {},
+   "standingOrders": [],
+   "mandate": {
+    "mandateId": "MAN-UUSI",
+    "version": 1,
+    "agentId": "agent:uusi-buyer-01",
+    "limits": {
+     "perOrderEUR": 1500,
+     "perMonthEUR": 6000,
+     "perEventEUR": 1500,
+     "perGuestEUR": 20
+    },
+    "allowedCategories": [
+     "dairy",
+     "plant_based",
+     "produce",
+     "meat",
+     "fish",
+     "bakery",
+     "dry_goods"
+    ],
+    "preferredBrands": [],
+    "hardExclusions": {
+     "allergens": [],
+     "diet": []
+    },
+    "substitution": {
+     "maxPriceDeltaPct": 5,
+     "allowBrandSwitch": true,
+     "allowPackSizeChange": true,
+     "sameCategoryOnly": true,
+     "silentCategories": [],
+     "blockedPairs": []
+    },
+    "preferences": {
+     "avoidSuppliers": []
+    },
+    "validDays": 90
+   },
+   "sites": [
+    {
+     "id": "SITE-UUSI-01",
+     "name": "Kahvila Uusi kitchen",
+     "type": "Café · opened this week",
+     "address": "Fredrikinkatu 30, Helsinki",
+     "scale": 1.0,
+     "lead": "Mira Nieminen"
+    }
+   ]
   }
  ]
 }

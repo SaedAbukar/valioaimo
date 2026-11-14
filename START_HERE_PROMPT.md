@@ -10,7 +10,13 @@ gateway that enforces a repeatable agent playbook.**
 1. Read `HANDOFF.md` in the repo root completely. It lists every file, link
    and decision. If the repo is not here, ask me for `aimo-agent-gateway.zip`
    and `aimo-data-model.zip`, or the GitHub repo name.
-2. Read `PROGRESS.md`, `docs/ARCHITECTURE.md`, `docs/data-model/DATA_MODEL.md`
+2. Read `docs/CHALLENGE_BRIEF.md` (the official challenge brief, organiser insights,
+   scenarios and judging criteria — the source of truth for what must be solved) and
+   `docs/PLAN.md` (the full plan exported from the Claude Docs plan; HANDOFF.md §4
+   overrides it for v2). Both are in this folder on the Mac: ~/Code/valioaimo/docs/.
+   If they are not committed yet, `git add docs/CHALLENGE_BRIEF.md docs/PLAN.md`,
+   commit and push them.
+   Then read `PROGRESS.md`, `docs/ARCHITECTURE.md`, `docs/data-model/DATA_MODEL.md`
    and `gateway/rules.yaml`.
 3. I will give you the Valio Aimo mock API endpoint. Put it in `.env` as
    `AIMO_BASE_URL`, with `AIMO_API_KEY` (I'll paste it). Never commit either.
@@ -112,3 +118,35 @@ Don't over-engineer the front end. A single-page app reusing
 
 Work autonomously. Record decisions in `docs/ASSUMPTIONS.md` instead of
 asking, except for the API endpoint and key, which I'll provide.
+
+## Appendix — challenge checklist (audit the MVP against the brief)
+
+The judged product is the AGENT-FACING GATEWAY and its rules; the chef chat app
+is one example buyer-side agent using it (the brief says it is "not about
+replacing the webshop with a chatbot"). Make each item TRUE, proven by a test or
+demo step, and record it in `docs/CHALLENGE_CHECKLIST.md` (PASS/FAIL, where, how
+to demo):
+
+1. Structured lookup: product, price and availability as JSON via OpenAPI
+   (`/openapi.json`) and MCP tools, through `gateway/adapter.py` and the real mock API.
+2. Inquiry -> commitment at fixed prices: signed, time-limited offer -> order must
+   cite the offer id; expired or changed price = re-quote; no negotiation.
+3. Permissions and human approval: published rules (spend, substitutions outside
+   preferences, late delivery, allergens); the gateway decides, not the LLM; approval
+   reaches a named human and is recorded.
+4. End to end: "I need 1,000 litres of lactose-free milk by Monday..." runs
+   request -> lookup -> order OR approval against the mock backend, from a script or
+   agent calling only the gateway, in under a minute.
+5. No exposure: agents never reach backend systems directly; document what is exposed.
+6. Open standards listed with reasons in `docs/STANDARDS.md` (OpenAPI 3.1, MCP,
+   /.well-known discovery, JWS-signed offers and confirmations, signed mandate).
+7. Trust both ways: agent bound to a customer account + signed authority; offers
+   verifiable by the agent.
+8. The playbook (Understand -> Recall -> Discover -> Plan -> Check -> Present -> Act
+   -> Learn) is served by the gateway and enforced.
+9–11 (optional): delivery reliability + sustainability labels; substitutions and
+   partial availability with reasons; human-readable log for buyer and Valio Aimo.
+
+Demo order: start with an external agent hitting the gateway, show approval, then
+show the chef app as one client.
+

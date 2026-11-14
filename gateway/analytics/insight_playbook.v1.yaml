@@ -1,0 +1,73 @@
+# Insight playbook — rails for answering any question about a kitchen's own data.
+# Same rules as the order playbook: tools unlock in order (409 step_not_allowed +
+# next_allowed_tools), every input is checked (422 with a `fix` that names what is
+# valid), every call is audited with this version. Designed so a small model can
+# follow it: each step has one job and the gateway does the hard parts (SQL,
+# chart specs, wording).
+id: insight_playbook
+version: "1.0.0"
+title: Ask the data — describe, query, chart, explain
+principle: The model chooses what to ask; the gateway writes the query, the chart and the words.
+
+steps:
+  - id: start
+    n: 0
+    tools: [start_analysis]
+    does: Open an analysis for one buyer (and optionally one kitchen). Data never crosses buyers.
+    input: {buyerId: string, siteId: "string (optional)"}
+  - id: describe
+    n: 1
+    tools: [describe_data, get_values]
+    does: Learn what can be asked — measures with units, dimensions, time grains, period, kitchens, and the real values of any dimension.
+    input:
+      describe_data: {}
+      get_values: {field: "a dimension name", search: "optional text", limit: "optional, default 50"}
+  - id: query
+    n: 2
+    tools: [run_query]
+    does: Ask one question as a query spec. Repeat as often as needed.
+    input:
+      measures: "list of measure names, e.g. [spend] or [spend, waste_pct]"
+      dimensions: "list of dimension names or {field: date, grain: day|week|month|quarter}"
+      filters: "list of {field, op: eq|neq|in|not_in|contains|gte|lte|between, value}"
+      period: "{from, to} as YYYY-MM-DD, or last_month | last_3_months | last_6_months | last_30_days | this_year"
+      compare: "previous_period | previous_year (not with a date dimension)"
+      calc: "list of {type: share|running_total|rank|change_pct|moving_avg, of: measure, window: n}"
+      sort: "list of {by: column, dir: asc|desc}"
+      limit: "1-500"
+      other: "true folds rows beyond limit into one Other row"
+  - id: suggest
+    n: 3
+    tools: [suggest_chart]
+    does: Ask which chart types fit the last result, best first, with a reason each.
+  - id: chart
+    n: 4
+    tools: [build_chart]
+    does: "Build the chart. Give only {type}; optionally x, y, color, size, title. Types: line, area, column, bar, stacked, grouped, percent, heatmap, donut, scatter, bubble, histogram, boxplot, waterfall, kpi, sparkline, table."
+  - id: explain
+    n: 5
+    tools: [explain_result]
+    does: Get a plain caption and three facts for the last result.
+
+recipes:   # worked examples a small model can copy
+  - ask: "How has our spend moved this year?"
+    query: {measures: [spend], dimensions: [{field: date, grain: month}]}
+    chart: {type: line}
+  - ask: "Top 10 products by spend in Tampere, rest as Other"
+    query: {measures: [spend], dimensions: [product], filters: [{field: site, op: eq, value: Pohjola Tampere}], sort: [{by: spend, dir: desc}], limit: 10, other: true}
+    chart: {type: bar}
+  - ask: "Which kitchen wastes most compared to last quarter?"
+    query: {measures: [waste_pct], dimensions: [site], period: last_3_months, compare: previous_period}
+    chart: {type: column}
+  - ask: "Category mix per kitchen"
+    query: {measures: [spend], dimensions: [site, category]}
+    chart: {type: percent}
+  - ask: "Expensive and wasteful products"
+    query: {measures: [spend, waste_pct], dimensions: [product], sort: [{by: spend, dir: desc}], limit: 40}
+    chart: {type: scatter}
+  - ask: "Carbon footprint by category, share of total"
+    query: {measures: [co2e], dimensions: [category], calc: [{type: share, of: co2e}]}
+    chart: {type: donut}
+  - ask: "Busiest weekdays per kitchen"
+    query: {measures: [orders], dimensions: [weekday, site]}
+    chart: {type: heatmap}

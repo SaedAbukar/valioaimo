@@ -1,0 +1,250 @@
+# Aimo order playbook — the rails every purchasing agent follows.
+# Served at GET /v1/playbook. The gateway's state machine (gateway/playbook/engine.py)
+# enforces it: a tool unlocks only when the previous step produced its required
+# output; anything else returns 409 step_not_allowed with next_allowed_tools.
+# Every call is written to audit_event with this version, so runs replay.
+# Change log and plain-language explanation: docs/PLAYBOOK.md.
+id: order_playbook
+version: "1.0.0"
+title: Order playbook — recall first, discover only for gaps
+principle: The agent proposes; the gateway checks and decides. Recall the kitchen's own memory before searching.
+
+steps:
+  - id: receive
+    n: 0
+    name: Receive
+    does: Log the request and identify buyer, site and agent.
+    tools: [start_session]
+    output: Session
+    guards:
+      - id: known_agent
+        text: The agent must be registered to the buyer.
+      - id: valid_spending_limit
+        text: The buyer must have a valid signed spending limit (Intent Mandate). Otherwise stop.
+    next: [understand]
+
+  - id: understand
+    n: 1
+    name: Understand
+    does: Extract the Order Brief (what, how much, when, where, constraints, context). Mark each fact found, assumed or missing.
+    tools: [parse_request, ask_user]
+    output: OrderBrief
+    guards:
+      - id: one_question
+        text: If date, quantity or site is missing, ask ONE question card. Assumptions are shown, never hidden.
+    exit: brief.complete == true
+    next: [recall]
+
+  - id: recall
+    n: 2
+    name: Recall first
+    does: Search the buyer's own memory in a fixed order and build the idea from there.
+    order: [favourites, similar_orders, learned_quantities, standing_orders, leftovers]
+    tools: [get_favourites, find_similar_orders, get_learned_quantities, get_standing_orders, get_leftovers, recall]
+    exit_tool: recall
+    output: RecallResult
+    guards:
+      - id: recall_before_discover
+        text: Discover tools stay locked until recall has run.
+      - id: high_confidence_skip
+        text: Lines matched with high confidence go straight to Plan; only gaps go to Discover.
+    next: [discover, plan]
+
+  - id: discover
+    n: 3
+    name: Discover only for gaps
+    does: For the gaps only, map the need to a product group, search the Valio Aimo assortment and get signed offers.
+    tools: [search_products, get_product, request_offers]
+    exit_tool: request_offers
+    output: Candidates
+    guards:
+      - id: gaps_only
+        text: Locked when recall left no gaps.
+      - id: hard_constraints
+        text: If no offer meets the hard constraints (allergens, diet), return a safe alternative or a "Can't do this".
+    next: [plan]
+
+  - id: plan
+    n: 4
+    name: Plan
+    does: Build the basket. Quantity = guests × learned use + buffer − leftovers, whole packs with least waste, delivery day by shelf life, at most 3 alternatives where there is a real choice.
+    tools: [plan_basket]
+    output: BasketPlan
+    guards:
+      - id: traceable
+        text: Every line traces to recall or discovery and carries a plain "why".
+    next: [check]
+
+  - id: check
+    n: 5
+    name: Check
+    does: The gateway runs the trust checks (signed, fresh offers) and the spending, allergen and delivery rules.
+    tools: [check_basket]
+    run_by: gateway
+    output: Decision
+    guards:
+      - id: agent_cannot_override
+        text: The decision is computed by the gateway; the agent cannot change it.
+    next: [present]
+
+  - id: present
+    n: 6
+    name: Present
+    does: Turn the result into cards the chef understands.
+    tools: [render_cards]
+    output: Cards
+    guards:
+      - id: plain_language
+        text: No banned words; at most 3 numbers and 3 options per card; one main action.
+    next: [act, plan, understand]
+
+  - id: act
+    n: 7
+    name: Act
+    does: Place the order, or send the OK request to the right person.
+    tools: [place_order, request_approval]
+    output: Order
+    guards:
+      - id: after_check_only
+        text: Only after Check, and only what Check allowed (auto / tell me, or after the OK).
+      - id: price_locked
+        text: Prices are locked to the signed offers; an expired or changed offer stops the order.
+    next: [learn]
+
+  - id: learn
+    n: 8
+    name: Follow up and learn
+    does: Delivery updates, "How did it go?" after the event, outcome labels and tips. Feeds Recall next time.
+    tools: [record_usage, get_tips]
+    output: ProcessRecord
+    next: []
+
+# tools usable from any step after receive (read-only, never change state)
+always_allowed: [get_session, get_playbook]
+
+# changes the chef can make from the cards; they rewind the session to the named step
+rewinds:
+  parse_request: understand   # e.g. "now 200 guests"
+  plan_basket: plan           # e.g. pick another product, apply a tip, use the safe alternative
+
+decisions:
+  auto: {label: "Ready to order", rule_outcome: AUTO}
+  tell_me: {label: "Ordered, I'll tell you", rule_outcome: NOTIFY}
+  needs_ok: {label: "Needs your OK", rule_outcome: APPROVE}
+  blocked: {label: "Can't do this", rule_outcome: BLOCK}
+
+language:
+  banned_words: [mandate, policy, "rule id", gtin, jws, score, tier, "need group", "R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "V1", "V2", "V3", sku, "vc+jwt", offerid]
+  use_instead:
+    mandate: your spending limit
+    policy: your rules
+    score: best match
+  max_numbers_per_card: 3
+  max_options_per_card: 3
+
+cards:
+  understood: {title: "What I understood", action: [Looks right, Change]}
+  question: {title: "One question", action: [tap an answer]}
+  favourites: {title: "From your favourites", action: [Use this]}
+  basket: {title: "Shopping basket", action: [Order, See items]}
+  choice: {title: "Product choice", action: [Pick one]}
+  needs_ok: {title: "Needs your OK", action: [OK, Not now]}
+  cant_do: {title: "Can't do this", action: [Use alternative]}
+  delivery: {title: "Delivery", action: [Track]}
+  how_did_it_go: {title: "How did it go?", action: [Save]}
+  tip: {title: "Tip", action: [Apply, Ignore]}
+
+schemas:
+  Session:
+    type: object
+    required: [sessionId, buyerId, agentId, playbookVersion]
+    properties:
+      sessionId: {type: string}
+      buyerId: {type: string}
+      agentId: {type: string}
+      playbookVersion: {type: string}
+  Fact:
+    type: object
+    required: [status]
+    properties:
+      status: {enum: [found, assumed, missing]}
+  OrderBrief:
+    type: object
+    required: [context, what, howMuch, when, site, constraints, complete, missing]
+    properties:
+      context: {enum: [event, standing, ad_hoc]}
+      what: {$ref: "#/schemas/Fact"}
+      howMuch: {$ref: "#/schemas/Fact"}
+      when: {$ref: "#/schemas/Fact"}
+      site: {$ref: "#/schemas/Fact"}
+      constraints: {type: object}
+      complete: {type: boolean}
+      missing: {type: array, items: {type: string}}
+  RecallResult:
+    type: object
+    required: [matched, gaps, sources]
+    properties:
+      matched:
+        type: array
+        items:
+          type: object
+          required: [need, source, confidence]
+          properties:
+            need: {type: string}
+            source: {enum: [favourites, similar_orders, learned_quantities, standing_orders, leftovers]}
+            confidence: {enum: [high, medium, low]}
+      gaps: {type: array, items: {type: string}}
+      sources: {type: array}
+  Candidates:
+    type: object
+    required: [gaps]
+    properties:
+      gaps:
+        type: array
+        items:
+          type: object
+          required: [need, candidates]
+          properties:
+            need: {type: string}
+            candidates: {type: array, maxItems: 6}
+  BasketPlan:
+    type: object
+    required: [lines, total, deliveryDays]
+    properties:
+      lines:
+        type: array
+        items:
+          type: object
+          required: [productId, qty, unit, lineTotal, deliveryDate, why, source]
+          properties:
+            why: {type: string, minLength: 3}
+            source: {enum: [favourites, similar_orders, learned_quantities, standing_orders, leftovers, discover]}
+      total: {type: number}
+      deliveryDays: {type: array}
+  Decision:
+    type: object
+    required: [decision, reasons, offersVerified]
+    properties:
+      decision: {enum: [auto, tell_me, needs_ok, blocked]}
+      reasons: {type: array, items: {type: string}}
+      offersVerified: {type: boolean}
+  Cards:
+    type: object
+    required: [cards]
+    properties:
+      cards:
+        type: array
+        items:
+          type: object
+          required: [type, title]
+          properties:
+            options: {type: array, maxItems: 3}
+            numbers: {type: array, maxItems: 3}
+  Order:
+    type: object
+    required: [status]
+    properties:
+      status: {enum: [ordered, waiting_for_ok]}
+  ProcessRecord:
+    type: object
+    required: [processId, labels]

@@ -1,83 +1,133 @@
-# UX specification (v2, minimal Material 3)
+# UX — chat first, answers as cards (v2)
 
-The first UI was judged too busy. v2 strips it back to standard Material 3: fewer screens, one main action per screen, details in bottom sheets, short sentence-case text, and three colours.
+**Who it is for:** chefs and kitchen staff, not IT people. They are busy, often on a
+phone, sometimes with wet hands. The app must feel calm and obvious, and nobody
+should ever feel they lack the know-how to use it.
 
-## Design tokens (single source: `ui/src/styles.css`)
+v1 showed too much: rule ids, scores, tiers, offer details. v2 hides all of that
+behind one "Why?" link and talks like a colleague.
 
-| Role | Light | Dark | Use |
-| --- | --- | --- | --- |
-| Primary (turquoise) | `#087a85` (5.1:1 on white) | `#6fd3dc` | Filled buttons, active states, chart line, "ordered" status |
-| Surface (white) | `#ffffff` | `#0e1a1d` (blue-grey tuned to the turquoise hue) | Page background |
-| Secondary container (sky blue) | `#dcf0fa`, accent `#87ceeb` | `#22445a`, accent `#8fc9e3` | Selected nav item, selected chips/segments, tonal buttons, "kept" bar segment |
-| Surface containers | `#f4f9fa` / `#eaf4f6` / `#ddedf0` | `#142326` / `#18292d` / `#203438` | Cards, lists, sheets (turquoise-tinted neutrals) |
-| Text | `#0f1e22`, variant `#46595e` | `#e1eef0`, variant `#a9bfc4` | ≥ 4.5:1 on their surfaces |
-| Block / approve | `#b3261e` / `#8a5a00` | `#f2b8b5` / `#e6c27a` | Small status text and icons only |
+## The first screen is a chat
 
-Type: Figtree, M3 scale (display 36/44 used once per screen, headline 24/32, title 22/28 and 16/24, body 16/24 and 14/20, label 12/16). Spacing on an 8dp grid; corner radius 12–16dp (sheets 28dp). No gradients, glows or emoji; no shadows except the snackbar and menus.
+A normal AI chat, as in Claude, ChatGPT or Gemini: a message box, a mic button and
+a thread. The demo opens on a chat that already shows the gala example:
+"Gala dinner for 180 on Saturday…" → What I understood → From your favourites →
+Basket → Ordered.
 
-## Navigation
+**The assistant answers only in cards, never in paragraphs.** Each chat turn runs
+the gateway playbook (`POST /v1/chat`) and each step's output becomes a card, so the
+chat is the playbook made visible.
 
-```mermaid
-flowchart LR
-  A[Autopilot] --- O[Orders] --- I[Insights] --- S[Settings]
-  S --> P[Preferences] & M[Mandate] & AL[Allergens and diets] & AG[Agents] & AU[Audit log] & OPS[Valio Aimo view] & H[How it works] & D[Demo scenarios]
-```
+## Card types
 
-Phone: navigation bar with 4 destinations. Desktop (≥ 840px): navigation rail. Top app bar: screen title, organisation switcher on top-level screens, back arrow on Settings pages. Approvals waiting show as a badge on Orders.
+| Card | When | Content | Main action |
+|---|---|---|---|
+| What I understood | After every request | Event, date, guests, dishes, diets as chips; guesses dashed | Looks right · Change |
+| One question | A critical fact is missing (never more than one) | Short question + up to 3 tap answers | Tap an answer |
+| From your favourites | Recall found a match | "Same as your Spring gala 2026. It went well." | Use this |
+| Shopping basket | Plan is ready | Total, per guest, deliveries (max 3 numbers) | Order · See items |
+| Product choice | A real choice (no memory for this need) | Up to 3 products: name, price per kg/L, one-line why, tag (Best match, Cheaper option, Faster delivery) | Pick one |
+| Needs your OK | Over a limit or a change | What and why in one sentence | OK · Not now |
+| Can't do this | Blocked (e.g. allergen) | What and why, safe choice as a chip | Use alternative |
+| Delivery | After ordering | Day, time of day, total | Track |
+| How did it go? | After the event | Per product: Used it all / Some left / Ran out | Save |
+| Tip | From history | "Your last 3 galas had whipping cream left over. Order 20% less?" | Apply · Ignore |
 
-## Screens
+### Wording rules (enforced by the gateway's card lint)
 
-### Autopilot
-![](screenshots/autopilot-390-light.png) ![](screenshots/autopilot-1280-dark.png)
+- One idea per card, one main action, at most 3 options and 3 numbers.
+- Never shown: mandate, policy, rule id, GTIN, JWS, score, tier, need group, unit codes like KI or ST.
+- Said instead: spending limit, your rules, product, price per kg / L, best match, cheaper option, faster delivery.
+- Every technical detail sits behind **Why?**, written in the same plain words.
+- Dates as kitchens write them: "Sat 21.11.". Money without cents above €100.
 
-- One input, "What are you planning?", with a mic button inside the field, plus **Examples** (text button) and **Plan** (filled button). After planning it collapses to a one-line field (tap to edit) so the result fits above the fold on a phone.
-- The same input takes events ("Gala for 180…") and plain orders ("1,000 L lactose-free milk by Monday"). Lines with L or kg go to the purchasing agent; everything else becomes an event brief. "Now 200 guests" re-scales the current event.
-- Result: one summary card with type, title, date, guests, total, per guest vs target, delivery dates, status, and the order link or **Approve and order**. One quiet line follows, e.g. "85 products compared · 3 leftovers used · 0 approvals needed"; it expands to the full count.
-- Below the card (beside it on screens ≥ 1100px) is one list. Event: guests stepper, basket, menu and diets, allergen check, prep timeline, rules, after the event. Plain order: options, products, rules. Each row opens a bottom sheet.
+Cards from earlier turns keep their content but lose one-time buttons (you can't
+order twice from an old basket); "See items" and "Track" stay.
 
-### Orders
-![](screenshots/orders-390-light.png)
+## Layout: Claude + Jira
 
-"Waiting for approval" sits first, then filter chips (All, Events, Needs attention, Blocked) and the list. Each row shows request, date, total and a status label. Tapping a row opens the detail sheet: key facts, outcome labels, items, substitutions, rules, agent steps (expandable) and the audit trail (expandable). Tapping an approval opens the approval sheet, with per-line approve, change or reject, the approver and a note.
+**Desktop (≥ 860 px):** left sidebar (New chat, Chat, Orders, Insights, Settings,
+recent chats, who you are), chat in the centre (max 760 px), and a right panel that
+slides in for "See items", an order ticket, or details.
 
-![](screenshots/sheet-proc-390-light.png) ![](screenshots/sheet-approval-390-light.png)
+**Phone:** full-screen chat; bottom bar with Chat, Orders, Insights, More; the
+board becomes a list grouped by status; details open as a bottom sheet.
+
+### Orders board
+
+Planning → Waiting for OK → Ordered → Delivered → Done. A ticket shows the event
+or order, one subtitle line, a status pill and the total. Opening it shows a 5-step
+progress bar, deliveries and items grouped by day with a plain why per line and
+where it came from (Favourite, Worked last time, New). For the demo the panel also
+lets you act as the approver ("OK, order it") and mark an order delivered.
 
 ### Insights
-![](screenshots/insights-1280-light.png)
 
-Four headline metrics: autonomous rate, manual corrections, waste value and need-by hit rate. Each tile opens its governed definition. Below are one single-hue trend chart and up to five recommendations, one line each with **Apply**; tapping a row shows the evidence and context. **See all metrics** opens all 14 governed metrics, the most-wasted products and the leftovers in stock.
+Three or four plain statements ("You threw away less this month."), one chart
+(food left over, share of food ordered, 8 weeks) and tips as cards.
 
-### Settings
-![](screenshots/settings-390-light.png)
+### Settings (More on phones)
 
-The list contains:
-- Preferences: preset segmented button, weight sliders, live ranking, "Prefer" chips, favourites, pinned products.
-- Mandate: limits, substitute rules, sign.
-- Allergens and diets.
-- Agents (kill switch).
-- Audit log: verify and tamper test.
-- Valio Aimo view.
-- How it works: architecture, trust, data model, standards.
-- Demo scenarios: runs S0–S8 as a plain list, with no overlay tour.
-- Theme: System, Light or Dark.
+Kitchen (switch between the demo kitchens), favourites, spending limits, never
+order (allergens), people who OK orders, appearance (system / light / dark), and
+"How it works": the nine playbook steps in plain words.
 
-## Components used
-Top app bar, navigation bar and rail, cards (filled tonal surface), list items (one or two lines, leading icon, trailing text or chevron), filled, tonal and text buttons, icon buttons (48dp), outlined text fields, segmented buttons, sliders, switches, filter chips (only where filtering), bottom sheets (centred dialogs on desktop), menus and snackbars.
+## Visual design
+
+Minimal Material 3. Three colours: turquoise (primary), white (surface) and sky blue
+(secondary), each tuned for light and dark. Muted amber and red appear only on
+"Needs your OK" and "Can't do this". Figtree, 17 px base, 19 px card sentences,
+26 px numbers. Generous spacing, 20 px card corners, simple line icons.
+No gradients, glows, emoji or jargon.
 
 ## States
-- **Loading:** "Preparing demo data…"
-- **Busy:** the Plan button reads "Planning…" and is disabled.
-- **Empty lists:** a short sentence.
-- **Errors:** a snackbar ("Something went wrong. …"). Reconciliation validation errors also use the snackbar.
-- **Voice unavailable:** an inline one-line note.
-- **Blocked order:** the reason as a one-line block-coloured sentence.
+
+- **Working:** a single line under the thread walks through the steps ("Reading
+  your request", "Checking your favourites", "Building the basket", "Checking your rules").
+- **Errors:** a short toast that says what went wrong; the chat stays as it was.
+- **Offline / artifact:** the same page plays recorded gateway runs and offers the
+  examples as tap answers if you type something it has no recording for.
+- **Voice:** Web Speech API in Chrome and Edge (fi-FI if the text looks Finnish,
+  else en-GB). Where the microphone is blocked, a toast says to type instead.
 
 ## Accessibility
-- **Contrast:** text ≥ 4.5:1 in both themes.
-- **Touch targets:** 48dp for all compact controls; chips and buttons get an invisible extended hit area.
-- **Focus:** a visible ring on every control.
-- **Screen readers:** ARIA labels on icon buttons, `aria-current` on navigation, `aria-pressed` on chips, `role=dialog` sheets with focus moved to Close, Esc closes, and the chart has a text alternative with its latest value.
-- **Motion:** respects reduced motion.
 
-## Copy rules
-Sentence case, plain verbs ("Plan", "Approve and order", "Record usage"). No exclamation marks, marketing words or UI self-explanations. Rule reasons are templated sentences with numbers and the rule id.
+Visible focus rings, keyboard send (Enter) and Escape to close panels, focus returns
+to the opener, buttons ≥ 44 px, `aria-pressed` on the usage choices, `role="status"`
+for progress and toasts, reduced motion respected, contrast checked in both themes.
+
+Screenshots: [`docs/screenshots/v2/`](screenshots/v2) — every scenario at 390 px and 1280 px, light and dark.
+
+---
+
+## v3 (14 Nov 2026): Orders like Jira, Insights like Wrapped, Kitchens like a CRM
+
+**Orders.** Switch between **Board** (five columns) and **List** (rows), remembered per
+device. Every order has a key (`POH-901`) and an event colour label; regular deliveries
+get a grey "Regular" label. Search, kitchen filter, group by event or kitchen (swimlanes
+on the board, sections in the list), quick filters (Needs OK, Due this week, Events only)
+and an event legend you can click to filter. The Done column and the list include a year
+of past orders (833 for Pohjola), sortable and paged 50 at a time. Opening a live order
+shows its activity timeline ("Request understood → Checked favourites and past orders →
+Basket planned → Checked: fits your rules → Ordered from Valio Aimo"); opening a past one
+shows every product, whether it was just right or left over, and whether it came on time.
+
+**Insights › Your year.** A story of nine full-colour cards: the year in numbers, your
+number-one product, your kitchen personality ("The Cream Team"), your busiest month, your
+biggest night, how much less you threw away, your carbon footprint in car trips, on-time
+deliveries, and a send-off into Explore. Tap the arrows, use ← → keys, or swipe. Pick one
+kitchen or the whole group.
+
+**Insights › Explore.** Ask in words, filter by kitchen, period, category and event type,
+or tap a starter question. The answer is one chart, a plain caption and three facts, with
+a Chart / Table switch and "How I made this" showing each tool step.
+
+**Kitchens** (was Settings). Organisation header with credit in use and the people who OK
+orders, then one card per kitchen with spend in the last 30 days, food left over, on-time
+rate and a 12-month sparkline. A kitchen opens a panel with Overview, People, Deliveries
+and Rules. Favourites, rules, appearance and "How it works" follow.
+
+**Look.** Material 3 tonal surfaces and state layers (every button and card tints on hover
+and press), bigger story type, and a categorical palette checked with the colour validator
+(turquoise first). Yellow and magenta sit below 3:1 on white, so every chart has tooltips,
+a legend and a table view.

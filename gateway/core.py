@@ -10,7 +10,7 @@ import copy
 from datetime import timedelta
 
 from . import catalog, planner, policy, preferences, signals as sig, trust
-from .adapter import FixtureBackend
+from .adapter import FixtureBackend, make_client
 from .audit import AuditLedger
 from .clock import Clock
 from .crypto import load_or_create, verify_jws
@@ -19,7 +19,7 @@ from .util import iso, new_id, s2d
 
 
 class Gateway:
-    def __init__(self, db: str = ":memory:", clock: Clock | None = None):
+    def __init__(self, db: str = ":memory:", clock: Clock | None = None, live: bool = False):
         self.clock = clock or Clock(frozen=True)
         self.store = Store(db)
         self.backend = FixtureBackend(self.clock)
@@ -33,6 +33,13 @@ class Gateway:
             self.buyer_keys[bid] = load_or_create(None, f"buyer-{bid.lower()}")
             self.register_mandate(bid, self.sign_mandate(bid, b["mandate"]))
         self.records: list[dict] = []
+        # v2: playbook rails, live mock API (only when asked for and configured), orders board
+        self.aimo = make_client() if live else None
+        self.kill_switch: dict[str, bool] = {}
+        self.orders: dict[str, dict] = {}
+        self.approvals: dict[str, str] = {}
+        from .playbook.engine import Engine
+        self.engine = Engine(self)
 
     # --- discovery ---------------------------------------------------------
     def jwks(self) -> dict:
