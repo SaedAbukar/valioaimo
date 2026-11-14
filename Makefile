@@ -12,8 +12,8 @@ build:
 index:
 	$(PY) scripts/build_aimo_index.py
 
-mcp:
-	$(PY) -m gateway.mcp_server
+mcp:  # stdio proxy to the running gateway (make run); unset AIMO_GATEWAY_URL for an in-process gateway
+	AIMO_GATEWAY_URL=http://127.0.0.1:8000 $(PY) -m gateway.mcp_server
 
 setup:
 	python3 -m venv .venv && .venv/bin/pip install -r requirements.txt

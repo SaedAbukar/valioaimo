@@ -12,6 +12,7 @@ The same tools are exposed over MCP: `python -m gateway.mcp_server`.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -20,7 +21,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 
 from . import aimo_products, catalog, trust
 from .adapter import load_dotenv
@@ -45,6 +46,16 @@ from .analytics.analyst import Analyst  # noqa: E402
 
 DEMO_GALA = ("Gala dinner for 180 on Saturday 21.11.: salmon starter, beef tenderloin, chocolate mousse. "
              "12 vegan, 8 gluten-free, 1 nut allergy.")
+
+
+class _Asgi:
+    """Wrap an ASGI callable so Starlette's Route serves it as an app (exact path, no 307 to a trailing slash)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        await self.app(scope, receive, send)
 
 
 def make_app(live: bool = True) -> Starlette:
@@ -427,7 +438,17 @@ def make_app(live: bool = True) -> Starlette:
     async def activity(req: Request):
         return JSONResponse({"activity": state["agent"].activity(req.path_params["sid"])})
 
-    app = Starlette(routes=[
+    # MCP over Streamable HTTP on THIS gateway: an MCP agent shares sessions, approvals, stock and audit with REST
+    from . import mcp_app
+    mcp_asgi, mcp_srv = mcp_app.http_app(gw, lambda: state["analyst"],
+                                         os.environ.get("AIMO_PUBLIC_URL", "http://127.0.0.1:" + os.environ.get("PORT", "8000")))
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        async with mcp_srv.session_manager.run():
+            yield
+
+    app = Starlette(lifespan=lifespan, routes=[
         Route("/v1/orders/history/{oid}", order_detail), Route("/v1/orders/{sid}/activity", activity),
         Route("/v1/tools", tools_ep), Route("/v1/insights/playbook", insight_playbook_ep),
         Route("/v1/insights/sessions", insight_sessions, methods=["POST"]),
@@ -452,6 +473,7 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/offers/{oid}", offer_get), Route("/v1/offers/{oid}/verify", offer_verify, methods=["POST"]),
         Route("/v1/orders/{oid}", order_get), Route("/v1/approvals", approval_inbox),
         Route("/v1/ops/agents/{aid}/pause", ops_pause, methods=["POST"]),
+        Route("/mcp", _Asgi(mcp_asgi), methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_asgi),
     ])
     app.state.gw = gw  # the live Gateway (replaced on /v1/demo/reset); used by tests and tools
     return app

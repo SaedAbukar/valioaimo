@@ -20,8 +20,8 @@ def ucp_profile(base: str) -> dict:
             "services": {"dev.ucp.shopping": {
                 "version": "2026-01",
                 "rest": {"schema": f"{base}/openapi.json", "endpoint": f"{base}/v1"},
-                "mcp": {"transport": "stdio", "command": "python -m gateway.mcp_server",
-                        "auth": "AIMO_AGENT_TOKEN (the agent's bearer token)"},
+                "mcp": {"transport": "streamable-http", "endpoint": f"{base}/mcp", "auth": "Authorization: Bearer <agent token>",
+                        "stdio": "AIMO_GATEWAY_URL=<base> AIMO_AGENT_TOKEN=<token> python -m gateway.mcp_server (proxy to /mcp)"},
                 "a2a": {"agentCard": f"{base}/.well-known/agent-card.json"}}},
             "capabilities": [
                 {"name": "dev.ucp.shopping.catalog", "spec": "POST /v1/products/search, POST /v1/products/price-availability"},
