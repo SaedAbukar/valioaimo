@@ -62,3 +62,10 @@ def test_mcp_typed_call_runs_the_same_rails():
     r = json.loads(m.parse_request(sessionId=sid, text=BRIEF))
     assert r["step"] == "understand"
     assert json.loads(m.place_order(sessionId=sid, offerIds=["x"]))["error"] == "step_not_allowed"
+
+
+def test_mcp_wait_for_update_returns_session_events():
+    sid = json.loads(m.start_session())["sessionId"]
+    m.parse_request(sessionId=sid, text=BRIEF)
+    r = json.loads(m.wait_for_update(sid, 0, 0))
+    assert [e["type"] for e in r["events"]][:2] == ["step.completed", "step.completed"] and r["next"] >= 2

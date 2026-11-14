@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import anyio
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -124,6 +125,20 @@ def make_app(live: bool = True) -> Starlette:
         c, s = own_session(req)
         return replay(gw().engine.call(s["sessionId"], req.path_params["tool"], await body(req),
                                        idempotency_key=req.headers.get("idempotency-key")))
+
+    @guarded
+    async def session_events(req: Request):
+        _, s = own_session(req)
+        try:
+            after, wait = int(req.query_params.get("after", 0)), float(req.query_params.get("wait", 0))
+            if not 0 <= wait <= 25:
+                raise ValueError
+        except ValueError:
+            return JSONResponse({"error": "guard_failed", "guard": "bad_input", "message": "after is an integer, wait is 0-25 seconds.",
+                                 "fix": {"example": "?after=0&wait=20"}}, status_code=422)
+        evs = await anyio.to_thread.run_sync(gw().events.wait, s["sessionId"], after, wait)
+        return JSONResponse({"sessionId": s["sessionId"], "events": evs, "next": evs[-1]["seq"] if evs else after,
+                             "next_allowed_tools": gw().engine.allowed(s)})
 
     @guarded
     async def session_log(req: Request):
@@ -389,7 +404,7 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/products/search", product_search, methods=["POST"]),
         Route("/v1/products/price-availability", price_availability, methods=["POST"]),
         Route("/v1/products/{pid}", product_get), Route("/v1/mandate", mandate_ep),
-        Route("/v1/sessions/{sid}/log", session_log),
+        Route("/v1/sessions/{sid}/log", session_log), Route("/v1/sessions/{sid}/events", session_events),
         Route("/v1/offers/{oid}", offer_get), Route("/v1/offers/{oid}/verify", offer_verify, methods=["POST"]),
         Route("/v1/orders/{oid}", order_get), Route("/v1/approvals", approval_inbox),
         Route("/v1/ops/agents/{aid}/pause", ops_pause, methods=["POST"]),

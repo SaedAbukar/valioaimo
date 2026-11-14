@@ -138,6 +138,21 @@ def get_audit_log(sessionId: str | None = None) -> str:
 
 
 @mcp.tool()
+def wait_for_update(sessionId: str, after: int = 0, timeoutSeconds: float = 20) -> str:
+    """Push updates: wait (up to 25 s) for this session's next events after cursor `after`, e.g. approval.decided
+    after request_approval. Returns {events, next, next_allowed_tools}; call again with after=next."""
+    try:
+        s = GW.engine.session(sessionId)
+    except PlaybookError as e:
+        return _dump({"status": e.status, **e.body()})
+    if s["buyerId"] != ME.buyer_id or s["agentId"] != ME.agent_id:
+        return _dump({"status": 403, "error": "forbidden", "message": "This session belongs to another agent."})
+    evs = GW.events.wait(sessionId, after, timeoutSeconds)
+    return _dump({"sessionId": sessionId, "events": evs, "next": evs[-1]["seq"] if evs else after,
+                  "next_allowed_tools": GW.engine.allowed(s)})
+
+
+@mcp.tool()
 def call_tool(sessionId: str, tool: str, args_json: str = "{}", idempotencyKey: str | None = None) -> str:
     """Run any playbook tool for a session, e.g. parse_request {"text": "..."}, recall, request_offers,
     plan_basket, check_basket, render_cards, place_order. Out-of-order calls return step_not_allowed.

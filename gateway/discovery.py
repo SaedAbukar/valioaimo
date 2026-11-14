@@ -185,6 +185,13 @@ def openapi(base: str = "") -> dict:
         "/v1/sessions/{sessionId}": {"get": _op("Session state, outputs per step, next_allowed_tools", "Playbook", _json({"type": "object"}), params=[_p("sessionId")])},
         "/v1/sessions/{sessionId}/tools/{tool}": {"post": _op("Run one playbook tool (place_order needs PlaceOrderArgs)", "Playbook",
                                                                _json(_ref("ToolResult")), tool_body, tool_params + [IDEMPOTENCY_KEY], errors=("401", "403", "409", "422"))},
+        "/v1/sessions/{sessionId}/events": {"get": _op("Push updates: long-poll the session's events (step.completed, decision.made, "
+                                                       "approval.requested, approval.decided, order.placed, offer.expiring, suggestion.created)",
+                                                       "Playbook", _json({"type": "object", "properties": {
+                                                           "events": {"type": "array", "items": {"type": "object"}}, "next": {"type": "integer"},
+                                                           "next_allowed_tools": {"type": "array", "items": {"type": "string"}}}}),
+                                                       params=[_p("sessionId"), _p("after", "query", "last seq seen (cursor); default 0"),
+                                                               _p("wait", "query", "seconds to wait for a new event, 0-25")], errors=("401", "403", "422"))},
         "/v1/sessions/{sessionId}/log": {"get": _op("Plain-language log of what the agent did and why", "Audit", _json({"type": "object"}), params=[_p("sessionId")])},
         "/v1/offers/{offerId}": {"get": _op("A signed offer (vc+jwt)", "Offers", _json(_ref("Offer")), params=[_p("offerId")])},
         "/v1/offers/{offerId}/verify": {"post": _op("Six trust checks on an offer: signature, validity, freshness, binding, status, live re-check",

@@ -17,6 +17,7 @@ FREE = [  # read-only or trust tools, usable at any time (no commitment, so outs
     ("verify_offer", "POST /v1/offers/{offerId}/verify", "Six trust checks on an offer."),
     ("get_order", "GET /v1/orders/{orderId}", "An order with its signed confirmation."),
     ("get_audit_log", "GET /v1/audit", "This buyer's hash-chained audit log."),
+    ("wait_for_update", "GET /v1/sessions/{id}/events?after=N&wait=20", "Push updates: wait for the session's next events (e.g. approval.decided) instead of polling."),
 ]
 
 

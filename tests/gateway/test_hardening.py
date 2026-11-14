@@ -199,3 +199,47 @@ def test_every_4xx_in_rails_has_fix_or_next_allowed_tools(c):
         if r.status_code >= 400 and not _correctable(r):
             bad.append((tool, a, r.status_code, r.json()))
     assert not bad, bad
+
+
+# ---------------------------------------------------------------- Task 4: push updates
+def test_agent_is_woken_by_approval(c):
+    import time
+    sid, _ = http_to_present(c, BRIEF.replace("1,000", "3,000"))
+    aid = c.post(f"/v1/sessions/{sid}/tools/request_approval", json={}, headers=AGENT).json()["output"]["approval"]["approvalId"]
+    first = c.get(f"/v1/sessions/{sid}/events", headers=AGENT).json()
+    types = [e["type"] for e in first["events"]]
+    assert {"step.completed", "decision.made", "approval.requested"} <= set(types)
+    got = {}
+
+    def waiter():
+        t0 = time.perf_counter()
+        got["r"] = c.get(f"/v1/sessions/{sid}/events?after={first['next']}&wait=5", headers=AGENT).json()
+        got["s"] = time.perf_counter() - t0
+
+    th = threading.Thread(target=waiter)
+    th.start()
+    time.sleep(0.2)
+    c.post(f"/v1/approvals/{aid}", json={"ok": True}, headers=LAURA)
+    th.join(6)
+    assert got["s"] < 1.0
+    ev = [e for e in got["r"]["events"] if e["type"] == "approval.decided"][0]
+    assert ev["data"]["status"] == "approved" and "place_order" in ev["data"]["next_allowed_tools"]
+    assert got["r"]["next"] > first["next"]
+
+
+def test_events_are_own_session_only_and_wait_is_capped(c):
+    sid, _ = http_to_present(c)
+    assert c.get(f"/v1/sessions/{sid}/events", headers={"Authorization": "Bearer demo-key-kaarela"}).status_code == 403
+    r = c.get(f"/v1/sessions/{sid}/events?wait=99", headers=AGENT)
+    assert r.status_code == 422 and r.json()["fix"]
+    assert "/v1/sessions/{sessionId}/events" in c.get("/openapi.json").json()["paths"]
+    assert "wait_for_update" in {t["name"] for t in c.get("/v1/tools").json()["tools"]}
+
+
+def test_offer_expiring_event_is_emitted_on_read():
+    gw = Gateway()
+    sid, s = in_process_to_present(gw)
+    gw.clock.advance(14)
+    n_offers = len(s["data"]["plan"]["offers"])
+    assert len([e for e in gw.events.read(sid, 0) if e["type"] == "offer.expiring"]) == n_offers
+    assert len([e for e in gw.events.read(sid, 0) if e["type"] == "offer.expiring"]) == n_offers  # once per offer

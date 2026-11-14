@@ -42,7 +42,9 @@ class Gateway:
         self.approvals: dict[str, str] = {}
         self.inbox: list[dict] = []  # approval requests waiting for a named human
         from .playbook.engine import Engine
+        from .events import Events
         self.engine = Engine(self)
+        self.events = Events(self)
 
     # --- discovery ---------------------------------------------------------
     def jwks(self) -> dict:

@@ -241,8 +241,22 @@ class Engine:
                              inputs=_trim(args), refs={"step": step_id, "n": step["n"], "playbookVersion": pb["version"], "ms": ms},
                              decision=(out.get("decision") if isinstance(out, dict) else None),
                              reason=_summary(tool, out))
-        return {"tool": tool, "step": step_id, "output": out, "next_allowed_tools": self.allowed(s),
+        nxt = self.allowed(s)
+        self._emit(s, tool, step_id, out, nxt)
+        return {"tool": tool, "step": step_id, "output": out, "next_allowed_tools": nxt,
                 "sessionId": s["sessionId"], "playbookVersion": pb["version"]}
+
+    def _emit(self, s: dict, tool: str, step_id: str, out: dict, nxt: list[str]):
+        ev = self.gw.events
+        sid = s["sessionId"]
+        ev.emit(sid, "step.completed", {"tool": tool, "step": step_id, "next_allowed_tools": nxt})
+        if tool == "check_basket":
+            ev.emit(sid, "decision.made", {"decision": out["decision"], "reasons": out["reasons"], "next_allowed_tools": nxt})
+        elif tool == "request_approval":
+            ap = out["approval"]
+            ev.emit(sid, "approval.requested", {"approvalId": ap["approvalId"], "approver": ap["approver"]["name"], "total": ap["total"]})
+        elif tool == "place_order":
+            ev.emit(sid, "order.placed", {"orderId": out["orderId"], "total": out["total"], "backendOrderRef": out["backendOrderRef"]})
 
     def _new(self, out: dict, args: dict) -> dict:
         s = {"sessionId": out["sessionId"], "buyerId": out["buyerId"], "agentId": out["agentId"],

@@ -621,6 +621,8 @@ def decide_approval(gw, s: dict, ok: bool, person: dict, note: str | None = None
                     buyer_id=s["buyerId"], refs={"approvalId": appr["approvalId"], "step": "act", "personId": person["id"]},
                     decision="APPROVE" if ok else "REJECT",
                     reason=f"{person['name']} {'approved' if ok else 'declined'} the order" + (f": {note}" if note else ""))
+    gw.events.emit(s["sessionId"], "approval.decided", {"approvalId": appr["approvalId"], "status": appr["status"],
+                                                         "decidedBy": person["name"], "next_allowed_tools": gw.engine.allowed(s)})
     return appr
 
 
