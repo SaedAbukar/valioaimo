@@ -131,12 +131,16 @@ function after() {
 
 async function ask(prompt) {
   const { API, S } = A();
+  const seq = (I.ex.seq = (I.ex.seq || 0) + 1);  // only the latest question's answer is shown
   I.ex.prompt = prompt; I.ex.loading = true; I.ex.steps = false;
   if (S.view === 'insights') A().renderView();
   const f = I.ex.filters;
+  let answer;
   try {
-    I.ex.answer = await API.ask(S.buyerId, prompt, { period: f.period, category: f.category, event_type: f.event_type }, f.siteId);
-  } catch (e) { I.ex.answer = { error: e.message || 'That question could not be answered.' }; }
+    answer = await API.ask(S.buyerId, prompt, { period: f.period, category: f.category, event_type: f.event_type }, f.siteId);
+  } catch (e) { answer = { error: e.message || 'That question could not be answered.' }; }
+  if (seq !== I.ex.seq) return;  // a newer question was asked meanwhile
+  I.ex.answer = answer;
   I.ex.loading = false;
   if (S.view === 'insights') A().renderView();
 }

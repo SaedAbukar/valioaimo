@@ -210,12 +210,15 @@ class Analyst:
         start = self.E.call(None, "start_analysis", {"buyerId": buyer_id, "siteId": site_id, "agent": "claude-haiku"})
         sid = start["sessionId"]
         steps.append({"tool": "start_analysis", "args": {"buyerId": buyer_id}, "next": start["next_allowed_tools"]})
-        tools = [{"name": s_tool, "description": f"Step '{st['id']}': {st['does']}",
-                  "input_schema": {"type": "object", "additionalProperties": True}}
+        tools = [{"name": s_tool, "description": f"Step '{st['id']}': {st['does']}",  # the playbook's own input schema (1.1.0)
+                  "input_schema": {k: v for k, v in pb["inputs"][s_tool].items() if k != "examples"}}
                  for st in pb["steps"] for s_tool in st["tools"] if s_tool != "start_analysis"]
         system = ("You answer a chef's question about their kitchen data by calling the tools in order: "
                   "describe_data, optionally get_values, run_query (repeat if needed), suggest_chart, build_chart, explain_result. "
                   "Use only names returned by describe_data. If a tool returns an error with a 'fix', follow the fix and retry. "
+                  "If the question is vague, choose the measure and grouping that answer it best (for example 'wasting money' "
+                  "means waste in euros by product or kitchen, 'how are we doing' means spend and waste_pct over months) "
+                  "and say in the final sentence what you looked at. "
                   "Apply these page filters in every run_query: " + json.dumps(filters) + ". "
                   "Worked examples:\n" + json.dumps(pb["recipes"]) +
                   "\nFinish after explain_result with one short sentence.")
