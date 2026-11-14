@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from ..playbook.engine import GuardFailed
 from .explain import label_of
-from .store import SCHEMA
+from .store import all_fields
+
+SCHEMA = all_fields()
 
 SCHEMA_URL = "https://vega.github.io/schema/vega-lite/v5.json"
 TYPES = {

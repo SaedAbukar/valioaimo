@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from .store import SCHEMA
+from .store import all_fields
+
+SCHEMA = all_fields()
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 

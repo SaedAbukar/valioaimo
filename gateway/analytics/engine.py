@@ -98,12 +98,24 @@ class InsightEngine:
             return None
         return next(x["name"] for x in self.gw.buyers[s["buyerId"]]["sites"] if x["id"] == s["siteId"])
 
+    def _conn_for(self, name: str | None):
+        if name in (None, "orders"):
+            return self.conn
+        from . import datasets
+        return datasets.connect(self.gw)
+
     def _describe_data(self, s, a):
-        sch = store.SCHEMA
+        ds = query.dataset(a.get("dataset"))
+        sch = ds["schema"]
         b = self.gw.buyers[s["buyerId"]]
-        return {"measures": {k: {"label": v["label"], "unit": v["unit"]} for k, v in sch["measures"].items()},
+        from .datasets import DATASETS
+        return {"dataset": ds["name"], "datasets": ["orders", *DATASETS],
+                "datasetNote": "orders = a year of order history; agent_activity = one row per agent session; "
+                               "demand = planned and ordered lines plus needs that could not be met (and why).",
+                "measures": {k: {"label": v["label"], "unit": v["unit"]} for k, v in sch["measures"].items()},
                 "dimensions": {k: {"label": v["label"], "type": v["type"]} for k, v in sch["dimensions"].items()},
-                "timeGrains": sch["timeGrains"], "period": sch["period"], "relativePeriods": query.RELATIVE,
+                "timeGrains": list(query.GRAINS), "period": {"from": ds["period"][0].isoformat(), "to": ds["period"][1].isoformat()},
+                "relativePeriods": query.RELATIVE,
                 "operators": list(query.OPS), "calcs": query.CALCS, "chartTypes": charts.TYPES,
                 "sites": [x["name"] for x in b["sites"]], "scopedToSite": self._site_name(s),
                 "recipes": insight_playbook()["recipes"]}
@@ -125,7 +137,7 @@ class InsightEngine:
         spec = dict(a)
         if s["siteId"]:
             spec["filters"] = list(spec.get("filters") or []) + [{"field": "site", "op": "eq", "value": self._site_name(s)}]
-        res = query.run(self.conn, spec, s["buyerId"])
+        res = query.run(self._conn_for(spec.get("dataset")), spec, s["buyerId"])
         s["result"] = res
         preview = res["rows"][:20]
         return {"columns": res["columns"], "rows": preview, "rowCount": len(res["rows"]), "shape": res["shape"],

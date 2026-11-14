@@ -68,6 +68,16 @@ SCHEMA = {
 }
 
 
+def all_fields() -> dict:
+    """Labels of every dimension and measure across datasets (charts and explanations look names up here)."""
+    from .datasets import ACTIVITY_SCHEMA, DEMAND_SCHEMA
+    out = {"dimensions": {}, "measures": {}}
+    for sch in (ACTIVITY_SCHEMA, DEMAND_SCHEMA, SCHEMA):  # orders last: its labels win on shared names
+        for k in out:
+            out[k].update(sch[k])
+    return out
+
+
 def _buyers() -> list[dict]:
     return json.loads((DATA / "buyers.json").read_text())["buyers"]
 

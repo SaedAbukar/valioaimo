@@ -68,6 +68,12 @@ recipes:   # worked examples a small model can copy
   - ask: "Carbon footprint by category, share of total"
     query: {measures: [co2e], dimensions: [category], calc: [{type: share, of: co2e}]}
     chart: {type: donut}
+  - ask: "How often did our agent order without asking anyone, and how long did approvals take?"
+    query: {dataset: agent_activity, measures: [sessions, autonomous_rate, approval_rate, p90_approval_wait]}
+    chart: {type: kpi}
+  - ask: "What did we need that Valio Aimo could not deliver, and why?"
+    query: {dataset: demand, measures: [unmet_qty, lost_value_eur], dimensions: [unmet_reason]}
+    chart: {type: bar}
   - ask: "Busiest weekdays per kitchen"
     query: {measures: [orders], dimensions: [weekday, site]}
     chart: {type: heatmap}
@@ -83,11 +89,12 @@ inputs:
       siteId: {type: [string, "null"], description: "Optional kitchen id to scope the analysis to."}
       agent: {type: string, description: "Set by the gateway: who drives the analysis."}
     examples: [{buyerId: BUY-POHJOLA}, {buyerId: BUY-POHJOLA, siteId: SITE-POHJOLA-TRE}]
-  describe_data: &noargs
+  describe_data:
     type: object
     additionalProperties: false
-    properties: {}
-    examples: [{}]
+    properties:
+      dataset: {enum: [orders, agent_activity, demand], description: "Which dataset to describe (default orders); the answer lists all datasets."}
+    examples: [{}, {dataset: demand}]
   get_values:
     type: object
     additionalProperties: false
@@ -128,7 +135,11 @@ inputs:
     examples:
       - {measures: [spend], dimensions: [{field: date, grain: month}]}
       - {measures: [spend], dimensions: [product], sort: [{by: spend, dir: desc}], limit: 10, other: true}
-  suggest_chart: *noargs
+  suggest_chart: &noargs
+    type: object
+    additionalProperties: false
+    properties: {}
+    examples: [{}]
   build_chart:
     type: object
     additionalProperties: false
