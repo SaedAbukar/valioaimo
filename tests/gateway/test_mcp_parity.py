@@ -33,3 +33,16 @@ def test_mcp_brief_request_end_to_end():
     order = json.loads(m._run(sid, "place_order", {"offerIds": [o["offerId"] for o in plan["offers"]]}))["output"]
     got = json.loads(m.get_order(order["orderId"]))
     assert got["confirmationVerified"] and json.loads(m.verify_offer(plan["offers"][0]["offerId"]))["checks"]
+
+
+def test_mcp_place_order_is_retry_safe_with_an_idempotency_key():
+    m.GW.backend.reset()  # the earlier test bought the milk; start from full stock
+    sid = json.loads(m.start_session())["sessionId"]
+    for t, a in (("parse_request", {"text": BRIEF}), ("recall", {}), ("plan_basket", {}), ("check_basket", {}), ("render_cards", {})):
+        out = json.loads(m._run(sid, t, a))
+        if t == "plan_basket":
+            ids = [o["offerId"] for o in out["output"]["offers"]]
+    a = json.loads(m.call_tool(sid, "place_order", json.dumps({"offerIds": ids}), idempotencyKey="mcp-1"))
+    assert "output" in a, a
+    b = json.loads(m.call_tool(sid, "place_order", json.dumps({"offerIds": ids}), idempotencyKey="mcp-1"))
+    assert a["output"]["orderId"] == b["output"]["orderId"] and b["idempotentReplay"]

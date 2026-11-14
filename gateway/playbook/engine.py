@@ -7,17 +7,22 @@ the HTTP and MCP facades turn into `409 step_not_allowed` + next_allowed_tools.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import time
+from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 
 import jsonschema
 import yaml
 
-from ..util import iso, new_id
+from ..util import iso, new_id, parse_dt
 
 PLAYBOOK_FILE = Path(__file__).resolve().parent / "order_playbook.v1.yaml"
 HUMAN_TOOLS = {"decide_approval"}
+IDEMPOTENT_TOOLS = {"place_order", "request_approval", "record_usage"}  # state-changing; read-only tools ignore the key
+IDEMPOTENCY_TTL = timedelta(hours=24)
 
 
 class PlaybookError(Exception):
@@ -86,6 +91,28 @@ class Engine:
         self.gw = gw
         self.tools = tools
         self.sessions: dict[str, dict] = {}
+        self.idem: dict[str, dict] = {}  # "scope|key" -> {hash, response, at}
+
+    # ------------------------------------------------------------------ idempotency
+    def idempotent(self, scope: str, key: str | None, args: dict, fn) -> tuple[dict, bool]:
+        """Run fn once per (scope, key). A retry with the same body gets the stored response (replayed=True);
+        the same key with a different body is 422 idempotency_conflict. Failures are not stored, so a retry
+        after an error runs again."""
+        if not key:
+            return fn(), False
+        h = hashlib.sha256(json.dumps(args, sort_keys=True, default=str).encode()).hexdigest()
+        k = f"{scope}|{key}"
+        with self.gw.lock:
+            hit = self.idem.get(k)
+            if hit and self.gw.clock.now() - parse_dt(hit["at"]) < IDEMPOTENCY_TTL:
+                if hit["hash"] != h:
+                    raise GuardFailed("This Idempotency-Key was already used with a different request body.",
+                                      guard="idempotency_conflict",
+                                      fix={"idempotencyKey": "use a new key for a new request, or resend the original body"})
+                return copy.deepcopy(hit["response"]), True
+            out = fn()
+            self.idem[k] = {"hash": h, "response": copy.deepcopy(out), "at": iso(self.gw.clock.now())}
+            return out, False
 
     # ------------------------------------------------------------------ rules
     def allowed(self, s: dict | None) -> list[str]:
@@ -138,8 +165,17 @@ class Engine:
             raise NotFound(f"no session {sid}")
         return s
 
-    def call(self, sid: str | None, tool: str, args: dict | None = None, actor: str | None = None) -> dict:
-        args = args or {}
+    def call(self, sid: str | None, tool: str, args: dict | None = None, actor: str | None = None,
+             idempotency_key: str | None = None) -> dict:
+        args = dict(args or {})
+        key = idempotency_key or args.pop("idempotencyKey", None)
+        args.pop("idempotencyKey", None)
+        if key and tool in IDEMPOTENT_TOOLS and sid:
+            out, replayed = self.idempotent(f"{sid}|{tool}", key, args, lambda: self._call(sid, tool, args, actor))
+            return {**out, "idempotentReplay": True} if replayed else out
+        return self._call(sid, tool, args, actor)
+
+    def _call(self, sid: str | None, tool: str, args: dict, actor: str | None) -> dict:
         pb = playbook()
         s = self.sessions.get(sid) if sid else None
         if sid and not s:

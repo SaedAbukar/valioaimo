@@ -116,10 +116,14 @@ def make_app(live: bool = True) -> Starlette:
         _, s = own_session(req)
         return JSONResponse(gw().engine.view(s))
 
+    def replay(out: dict, status: int = 200) -> JSONResponse:
+        return JSONResponse(out, status_code=status, headers={"Idempotent-Replay": "true"} if out.get("idempotentReplay") else None)
+
     @guarded
     async def tool(req: Request):
         c, s = own_session(req)
-        return JSONResponse(gw().engine.call(s["sessionId"], req.path_params["tool"], await body(req)))
+        return replay(gw().engine.call(s["sessionId"], req.path_params["tool"], await body(req),
+                                       idempotency_key=req.headers.get("idempotency-key")))
 
     @guarded
     async def session_log(req: Request):
@@ -246,15 +250,20 @@ def make_app(live: bool = True) -> Starlette:
         s = gw().engine.session(sid)
         auth.same_buyer(c, s["buyerId"])
         b = await body(req)
+        key = req.headers.get("idempotency-key") or b.pop("idempotencyKey", None)
         ok = bool(b.get("ok", True))
-        conv = next((cv for cv in agent().convs.values() if sid in cv["sessionIds"]), None)
-        if conv:  # a chat order: the chef assistant places it straight after the OK
-            cards = agent().decide(sid, ok, c.person_id)
-            agent()._say(conv, cards, sid)
-            return JSONResponse({"approval": s["data"]["approval"], "cards": cards, "conversation": agent().public(conv)})
-        person = {"id": c.person_id, "name": c.name}
-        appr = decide_approval(gw(), s, ok, person, b.get("note"))
-        return JSONResponse({"approval": appr, "next": "The agent may now call place_order." if ok else "The order stays unplaced."})
+
+        def decide() -> dict:
+            conv = next((cv for cv in agent().convs.values() if sid in cv["sessionIds"]), None)
+            if conv:  # a chat order: the chef assistant places it straight after the OK
+                cards = agent().decide(sid, ok, c.person_id)
+                agent()._say(conv, cards, sid)
+                return {"approval": s["data"]["approval"], "cards": cards, "conversation": agent().public(conv)}
+            appr = decide_approval(gw(), s, ok, {"id": c.person_id, "name": c.name}, b.get("note"))
+            return {"approval": appr, "next": "The agent may now call place_order." if ok else "The order stays unplaced."}
+
+        out, replayed = gw().engine.idempotent(f"{sid}|approval|{c.person_id}", key, b, decide)
+        return replay({**out, "idempotentReplay": True} if replayed else out)
 
     async def chat(req: Request):
         b = await body(req)

@@ -138,10 +138,14 @@ def get_audit_log(sessionId: str | None = None) -> str:
 
 
 @mcp.tool()
-def call_tool(sessionId: str, tool: str, args_json: str = "{}") -> str:
+def call_tool(sessionId: str, tool: str, args_json: str = "{}", idempotencyKey: str | None = None) -> str:
     """Run any playbook tool for a session, e.g. parse_request {"text": "..."}, recall, request_offers,
-    plan_basket, check_basket, render_cards, place_order. Out-of-order calls return step_not_allowed."""
-    return _run(sessionId, tool, json.loads(args_json or "{}"))
+    plan_basket, check_basket, render_cards, place_order. Out-of-order calls return step_not_allowed.
+    idempotencyKey: retry-safe place_order / request_approval / record_usage (same key + same args = same result)."""
+    args = json.loads(args_json or "{}")
+    if idempotencyKey:
+        args["idempotencyKey"] = idempotencyKey
+    return _run(sessionId, tool, args)
 
 
 def _register(name: str):

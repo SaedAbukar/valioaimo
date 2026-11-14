@@ -87,3 +87,45 @@ def test_concurrent_orders_never_oversell(c):
     assert losers, "8 x 1,000 L must exceed the stock of the planned product"
     assert all(r.status_code == 409 and r.json()["guard"] == "stock_changed" for r in losers)
     assert len(g.backend.orders) == n - len(losers)
+
+
+# ---------------------------------------------------------------- Task 2: idempotency keys
+def test_retried_place_order_returns_same_order(c):
+    sid, out = http_to_present(c)
+    ids = [o["offerId"] for o in out["plan_basket"]["offers"]]
+    h = {**AGENT, "Idempotency-Key": "order-7f3a"}
+    r1 = c.post(f"/v1/sessions/{sid}/tools/place_order", json={"offerIds": ids}, headers=h)
+    r2 = c.post(f"/v1/sessions/{sid}/tools/place_order", json={"offerIds": ids}, headers=h)
+    assert r1.status_code == r2.status_code == 200
+    assert r1.json()["output"]["orderId"] == r2.json()["output"]["orderId"]
+    assert r2.headers.get("Idempotent-Replay") == "true" and "Idempotent-Replay" not in r1.headers
+    assert len(c.app.state.gw().backend.orders) == 1
+
+
+def test_idempotency_key_in_body_works_like_the_header(c):
+    sid, out = http_to_present(c)
+    body = {"offerIds": [o["offerId"] for o in out["plan_basket"]["offers"]], "idempotencyKey": "k-body"}
+    r1 = c.post(f"/v1/sessions/{sid}/tools/place_order", json=body, headers=AGENT)
+    r2 = c.post(f"/v1/sessions/{sid}/tools/place_order", json=body, headers=AGENT)
+    assert r1.json()["output"]["orderId"] == r2.json()["output"]["orderId"] and len(c.app.state.gw().backend.orders) == 1
+
+
+def test_same_key_different_body_is_422(c):
+    sid, out = http_to_present(c)
+    ids = [o["offerId"] for o in out["plan_basket"]["offers"]]
+    h = {**AGENT, "Idempotency-Key": "order-1"}
+    assert c.post(f"/v1/sessions/{sid}/tools/place_order", json={"offerIds": ids}, headers=h).status_code == 200
+    r = c.post(f"/v1/sessions/{sid}/tools/place_order", json={"offerIds": ids + ["OF-OTHER"]}, headers=h)
+    assert r.status_code == 422 and r.json()["guard"] == "idempotency_conflict" and r.json()["fix"]
+
+
+def test_approval_decision_is_idempotent(c):
+    sid, _ = http_to_present(c, BRIEF.replace("1,000", "3,000"))
+    aid = c.post(f"/v1/sessions/{sid}/tools/request_approval", json={}, headers=AGENT).json()["output"]["approval"]["approvalId"]
+    h = {**LAURA, "Idempotency-Key": "decide-1"}
+    r1 = c.post(f"/v1/approvals/{aid}", json={"ok": True}, headers=h)
+    r2 = c.post(f"/v1/approvals/{aid}", json={"ok": True}, headers=h)
+    assert r1.status_code == r2.status_code == 200 and r1.json()["approval"] == r2.json()["approval"]
+    assert r2.headers.get("Idempotent-Replay") == "true"
+    assert c.post(f"/v1/approvals/{aid}", json={"ok": False}, headers=h).status_code == 422
+    assert c.post(f"/v1/approvals/{aid}", json={"ok": True}, headers=LAURA).status_code == 422  # no key: already decided

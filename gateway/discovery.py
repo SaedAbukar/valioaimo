@@ -96,6 +96,12 @@ def _p(name: str, where: str = "path", desc: str = "") -> dict:
     return {"name": name, "in": where, "required": where == "path", "schema": {"type": "string"}, "description": desc}
 
 
+IDEMPOTENCY_KEY = _p("Idempotency-Key", "header",
+                     "Optional (IETF draft-ietf-httpapi-idempotency-key-header). A retry with the same key and body returns the "
+                     "stored response with 'Idempotent-Replay: true'; the same key with another body is 422 idempotency_conflict. "
+                     "Applies to place_order, request_approval, record_usage and approval decisions; kept 24 h.")
+
+
 SCHEMAS = {
     "Error": {"type": "object", "required": ["error"], "properties": {
         "error": {"type": "string"}, "message": {"type": "string"}, "guard": {"type": "string"},
@@ -164,7 +170,7 @@ def openapi(base: str = "") -> dict:
         "/v1/sessions": {"post": _op("Step 0: start a playbook session", "Playbook", _json(_ref("ToolResult")), _ref("StartSession"), errors=("401", "403", "422"))},
         "/v1/sessions/{sessionId}": {"get": _op("Session state, outputs per step, next_allowed_tools", "Playbook", _json({"type": "object"}), params=[_p("sessionId")])},
         "/v1/sessions/{sessionId}/tools/{tool}": {"post": _op("Run one playbook tool (place_order needs PlaceOrderArgs)", "Playbook",
-                                                               _json(_ref("ToolResult")), {"type": "object"}, tool_params, errors=("401", "403", "409", "422"))},
+                                                               _json(_ref("ToolResult")), {"type": "object"}, tool_params + [IDEMPOTENCY_KEY], errors=("401", "403", "409", "422"))},
         "/v1/sessions/{sessionId}/log": {"get": _op("Plain-language log of what the agent did and why", "Audit", _json({"type": "object"}), params=[_p("sessionId")])},
         "/v1/offers/{offerId}": {"get": _op("A signed offer (vc+jwt)", "Offers", _json(_ref("Offer")), params=[_p("offerId")])},
         "/v1/offers/{offerId}/verify": {"post": _op("Six trust checks on an offer: signature, validity, freshness, binding, status, live re-check",
@@ -172,7 +178,7 @@ def openapi(base: str = "") -> dict:
         "/v1/orders/{orderId}": {"get": _op("Order with its signed confirmation (order+jwt)", "Orders", _json(_ref("Order")), params=[_p("orderId")])},
         "/v1/approvals": {"get": _op("Approver inbox (human credential)", "Approvals", _json({"type": "object"}))},
         "/v1/approvals/{approvalId}": {"post": _op("Approve or decline (human credential; agents get 403)", "Approvals",
-                                                   _json({"type": "object"}), _ref("ApprovalDecision"), [_p("approvalId")], errors=("401", "403", "422"))},
+                                                   _json({"type": "object"}), _ref("ApprovalDecision"), [_p("approvalId"), IDEMPOTENCY_KEY], errors=("401", "403", "422"))},
         "/v1/audit": {"get": _op("Hash-chained audit log (own buyer; operations see all) and its verification", "Audit",
                                  _json({"type": "object"}), params=[_p("sessionId", "query")])},
         "/v1/ops/agents/{agentId}/pause": {"post": _op("Valio Aimo operations: pause or resume an agent (kill switch)", "Operations",
