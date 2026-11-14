@@ -318,6 +318,7 @@ inputs:
       acceptTip: {type: string, description: "tipId to apply."}
       ignoreTip: {type: string, description: "tipId to ignore."}
       acceptSuggestion: {type: string, description: "suggestionId from get_suggestions (Valio Aimo seller) to add; re-plans and re-checks."}
+      lineEdits: {type: object, additionalProperties: {type: number, minimum: 0}, description: "productId -> new amount in the line's unit (0 removes the line), as the chef edited the basket; prices, stock and rules are re-checked."}
     examples: [{}, {choices: {L1: "06439990001072"}}, {acceptTip: TIP-1}]
   check_basket: *noargs
   render_cards:

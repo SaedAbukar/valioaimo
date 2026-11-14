@@ -280,6 +280,8 @@ def plan_basket(gw, s: dict, args: dict) -> dict:
         raise StepNotAllowed("Recall must run before planning.", next_allowed_tools=["recall"])
     if args.get("acceptSuggestion"):
         _accept_suggestion(gw, s, args["acceptSuggestion"])
+    if args.get("lineEdits"):
+        d.setdefault("lineEdits", {}).update({str(k): float(v) for k, v in args["lineEdits"].items()})
     if getattr(gw, "aimo", None):  # live mode: recalled favourites are priced on the mock API too
         discover.refresh_curated(gw, _need_by(gw, s))
     b = d["brief"]
@@ -366,6 +368,19 @@ def plan_basket(gw, s: dict, args: dict) -> dict:
             lines.append({**l, "productId": l["gtin"], "need": need, "label": req.get("label", need), "why": why, "source": src,
                           "nameFi": p.get("nameFi"), "salesUnit": p.get("salesUnit"), "live": p.get("livePrice", False),
                           "aimoProductId": p.get("aimoProductId")})
+    edits = d.get("lineEdits") or {}
+    if edits:  # the chef's own amounts win; 0 removes the line (split lines of one product share the new amount)
+        by_gtin: dict[str, list] = {}
+        for l in lines:
+            by_gtin.setdefault(l["gtin"], []).append(l)
+        for g, want in edits.items():
+            ls = by_gtin.get(g, [])
+            have = sum(l["qty"] for l in ls)
+            for l in ls:
+                l["qty"] = r2(want * l["qty"] / have) if have else 0
+                l["lineTotal"] = r2(l["qty"] * l["unitPrice"])
+                l["why"] = (l.get("why") or "") + " Amount set by you."
+        lines = [l for l in lines if l["qty"] > 0]
     total = r2(sum(l["lineTotal"] for l in lines))
     deliveries: dict[str, list] = {}
     for l in lines:

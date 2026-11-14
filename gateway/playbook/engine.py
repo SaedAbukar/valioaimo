@@ -333,7 +333,7 @@ class Engine:
             if st["n"] >= n and st["id"] not in ("act", "learn"):
                 s["outputs"].pop(st["id"], None)
         keep = {"choices", "alternatives", "acceptedTips", "ignoredTips", "brief", "order", "approval", "asked", "history",
-                "suggestionCands", "suggestionLines", "acceptedSuggestions"}
+                "suggestionCands", "suggestionLines", "acceptedSuggestions", "lineEdits"}
         if to_step == "plan":
             keep |= {"recall", "candidates", "menu"}
         for k in list(s["data"]):

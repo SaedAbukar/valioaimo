@@ -32,6 +32,12 @@ SYSTEM = (
     "Follow the gateway's playbook: call start_session once, then parse_request with the chef's words, then only tools "
     "listed in next_allowed_tools (recall, request_offers only for gaps, plan_basket, check_basket, render_cards). "
     "Any number of guests is fine; never refuse a request because of its size.\n"
+    "VAGUE REQUESTS: if the chef is vague (for example 'something for a team lunch' or 'stock up for the weekend'), act "
+    "as a recommendation agent. Use the kitchen's own data first (recall, get_suggestions for seasonal Valio Aimo ideas) "
+    "and lookup_products to see what is available, then turn it into a concrete request in the chef's style with sensible "
+    "assumptions (guests 50 if not given, the next working day if no date, two or three classic Finnish dishes or staples) "
+    "and call parse_request with that concrete text. In your proposal say clearly what you assumed and recommended and "
+    "why, so the chef can change it. Ask a question only if nothing sensible can be assumed.\n"
     "CONFIRM FIRST: after check_basket and render_cards, do NOT order yet. Stop and reply to the chef in 2-4 short "
     "sentences: what you understood (event, guests, date, diets), the products you recommend from plan_basket (the main "
     "ones, with amounts), the total, and whether it needs an OK and from whom. Ask them to confirm or say what to change. "
@@ -39,6 +45,8 @@ SYSTEM = (
     "When the chef confirms, act: if place_order is allowed, cite exactly the offerIds from the latest plan_basket. If "
     "request_approval is allowed instead, call it, then call wait_for_update (timeoutSeconds 20, after = the last "
     "'next') until an approval.decided event arrives; if approved, call place_order; if declined, stop.\n"
+    "When the chef's message starts with EDIT followed by JSON, call plan_basket with lineEdits set to exactly that JSON, "
+    "then check_basket and render_cards, and propose again. "
     "When the chef asks for a change, call parse_request with the change in their words (for example 'now 250 guests') "
     "or plan_basket with choices, re-check, and propose again. "
     "If a call is refused, follow its fix or next_allowed_tools. Never invent or negotiate prices. "
@@ -208,7 +216,7 @@ class ChatAgent:
             extra["sessionId"] = d.get("sessionId")
         if name == "plan_basket":
             extra["plan"] = {"total": out.get("total"), "perGuest": out.get("perGuest"),
-                             "lines": [{k: l.get(k) for k in ("name", "qty", "unit", "unitPrice", "lineTotal", "deliveryDate", "why", "source")}
+                             "lines": [{k: l.get(k) for k in ("productId", "name", "qty", "unit", "unitPrice", "lineTotal", "deliveryDate", "why", "source")}
                                        for l in out.get("lines", [])],
                              "cantDo": [{"need": c.get("need"), "allergen": c.get("allergen"),
                                          "alternative": (c.get("alternative") or {}).get("name")} for c in out.get("cantDo", [])]}

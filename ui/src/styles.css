@@ -456,3 +456,14 @@ button.li::after, .ibtn::after, .new-chat::after, .recent button::after, .th::af
 .receipt-note.top { padding: 0 20px; color: var(--fg); font-size: 16px; }
 .receipt .acts.pad { padding: 0 20px 18px; }
 .receipt-total small { font-weight: 400; margin-left: 6px; }
+.receipt-lines li { align-items: center; flex-wrap: wrap; }
+.receipt-lines li.removed .r-name { text-decoration: line-through; color: var(--muted); }
+.r-edit { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.stepper-q { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--outline-strong); border-radius: var(--r-pill); padding: 2px; }
+.stepper-q small { color: var(--muted); font-size: 13px; padding-right: 4px; }
+.ibtn.sm { width: 32px; height: 32px; font-size: 18px; font-weight: 600; color: var(--fg); }
+.ibtn.sm.rm { color: var(--muted); }
+.qin { width: 64px; border: 0; background: none; text-align: right; font-size: 15px; font-weight: 600; padding: 4px 2px; -moz-appearance: textfield; }
+.qin::-webkit-outer-spin-button, .qin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.qin:focus { outline: 2px solid var(--sky-strong); border-radius: 6px; }
+.receipt-lines li > b.num { min-width: 92px; text-align: right; }

@@ -54,7 +54,7 @@ const KITCHENS = {
 const GALA = KITCHENS['BUY-POHJOLA'].ideas[0][0];
 
 // ------------------------------------------------------------------ state
-const S = {
+const S = { agentEdits: {},
   mode: 'live', buyerId: 'BUY-POHJOLA', view: 'chat', convId: null, convs: {}, chats: [], board: null,
   panel: null, busy: false, uiDone: {}, usage: {}, tips: {}, recording: false,
 };
@@ -292,10 +292,22 @@ function proposalHtml(e, live) {
   return `<article class="card receipt proposal" data-type="basket">
     <div class="receipt-h"><span class="ic">${ic('basket')}</span><div><b>Proposed basket</b><small>${esc(DECISION[e.decision] || 'For you to check')}${e.decision === 'needs_ok' && e.reasons ? ' · ' + esc(e.reasons[0] || '') : ''}</small></div></div>
     <p class="receipt-note top">${agentText(e.answer)}</p>
-    ${lines.length ? `<ul class="receipt-lines">${lines.map((l) => `<li><span class="r-name">${esc(l.name)}<small>${esc(qty(l.qty, l.unit))} × ${esc(eur2(l.unitPrice))}${l.why ? ' · ' + esc(l.why) : ''}</small></span><b class="num">${esc(eur2(l.lineTotal))}</b></li>`).join('')}</ul>
+    ${lines.length ? `<ul class="receipt-lines">${lines.map((l) => {
+      const ed = S.agentEdits[l.productId];
+      const removed = ed === 0;
+      const q = ed == null ? l.qty : ed;
+      return `<li class="${removed ? 'removed' : ''}"><span class="r-name">${esc(l.name)}<small>${esc(eur2(l.unitPrice))} per ${esc(l.unit)}${l.why ? ' · ' + esc(l.why) : ''}</small></span>
+        ${live ? `<span class="r-edit"><span class="stepper-q"><button class="ibtn sm" data-qstep="-1" data-pid="${esc(l.productId)}" data-base="${l.qty}" aria-label="Less ${esc(l.name)}" ${removed ? 'disabled' : ''}>−</button>
+          <input class="qin num" type="number" min="0" step="any" value="${Number(q.toFixed ? q.toFixed(2) : q)}" data-qin="${esc(l.productId)}" aria-label="Amount of ${esc(l.name)} in ${esc(l.unit)}" ${removed ? 'disabled' : ''}><small>${esc(l.unit)}</small>
+          <button class="ibtn sm" data-qstep="1" data-pid="${esc(l.productId)}" data-base="${l.qty}" aria-label="More ${esc(l.name)}" ${removed ? 'disabled' : ''}>+</button></span>
+          <button class="ibtn sm rm" data-qrm="${esc(l.productId)}" aria-label="${removed ? 'Keep' : 'Remove'} ${esc(l.name)}">${removed ? '↺' : '×'}</button></span>` : `<small>${esc(qty(l.qty, l.unit))}</small>`}
+        <b class="num">${removed ? '–' : esc(eur2(q * l.unitPrice))}</b></li>`;
+    }).join('')}</ul>
       <div class="receipt-total"><span>Total${p.perGuest ? ` <small class="muted">${esc(eur2(p.perGuest))} per guest</small>` : ''}</span><b class="num">${esc(eur2(p.total))}</b></div>` : ''}
     ${(p && p.cantDo || []).map((c) => `<p class="receipt-note">Can’t do: ${esc(c.need)}${c.allergen ? ' (' + esc(c.allergen) + ')' : ''}${c.alternative ? ' · safe alternative: ' + esc(c.alternative) : ''}</p>`).join('')}
-    ${live ? `<div class="acts pad"><button class="btn primary" data-agent-say="Yes, order it.">${e.decision === 'needs_ok' ? 'Send for OK' : 'Order this'}</button><button class="btn" data-agent-change>Change something</button></div>` : ''}
+    ${live ? `<div class="acts pad">${Object.keys(S.agentEdits).length
+      ? `<button class="btn primary" data-agent-update>Update basket</button><button class="btn" data-agent-reset>Undo changes</button>`
+      : `<button class="btn primary" data-agent-say="Yes, order it.">${e.decision === 'needs_ok' ? 'Send for OK' : 'Order this'}</button><button class="btn" data-agent-change>Change something</button>`}</div>` : ''}
   </article>`;
 }
 
@@ -315,7 +327,7 @@ function agentView() {
   r.events.forEach((e, i) => {
     if (e.type === 'tool_call') { const say = AGENT_SAYS[e.name] || 'Working on it'; if (group[group.length - 1] !== say) group.push(say); return; }
     if (['user', 'proposal', 'waiting_for_ok', 'done', 'stopped', 'error', 'text'].includes(e.type)) flush(false);
-    if (e.type === 'user') out.push(`<div class="msg-user">${esc(e.text)}</div>`);
+    if (e.type === 'user') out.push(`<div class="msg-user">${esc(e.text.startsWith('EDIT ') ? 'Changed the amounts in the basket' : e.text)}</div>`);
     else if (e.type === 'proposal') out.push(proposalHtml(e, i === lastProposal && r.status === 'waiting_user'));
     else out.push(row(e));
   });
@@ -597,7 +609,11 @@ document.addEventListener('click', async (e) => {
   if (!t) return;
   const d = t.dataset;
   if ('close' in d) return closePanel();
-  if (d.agentSay) return startAgent(d.agentSay);
+  if (d.agentSay) { S.agentEdits = {}; return startAgent(d.agentSay); }
+  if (d.qstep) { const cur = S.agentEdits[d.pid] ?? Number(d.base); const step = Math.max(1, Math.round(Number(d.base) * 0.1)); S.agentEdits[d.pid] = Math.max(0, Math.round((cur + Number(d.qstep) * step) * 100) / 100); return renderView(); }
+  if (d.qrm) { if (S.agentEdits[d.qrm] === 0) delete S.agentEdits[d.qrm]; else S.agentEdits[d.qrm] = 0; return renderView(); }
+  if (d.agentReset !== undefined) { S.agentEdits = {}; return renderView(); }
+  if (d.agentUpdate !== undefined) { const ed = S.agentEdits; S.agentEdits = {}; return startAgent('EDIT ' + JSON.stringify(ed)); }
   if (d.agentChange !== undefined) { const m = $('#msg'); if (m) { m.placeholder = 'What should change? e.g. now 250 guests, or no chocolate'; m.focus(); } return; }
   if (d.agentToggle !== undefined) { S.agentMode = !S.agentMode; store.set('agentMode', S.agentMode); return render(); }
   if (d.agentApprove || d.agentDecline) {  // the named approver decides with her own credential; the agent is woken by wait_for_update
@@ -634,6 +650,9 @@ document.addEventListener('click', async (e) => {
   if (d.tip) { S.tips[d.tip] = d.v; return loadInsights(); }
   if ('reset' in d) { await API.reset(); S.convs = {}; S.convId = null; S.uiDone = {}; await boot(); toast('Demo restarted'); return; }
   if (t.id === 'mic') return toggleMic();
+});
+document.addEventListener('change', (e) => {  // typed amount in the agent's proposed basket
+  if (e.target.dataset && e.target.dataset.qin) { const v = Math.max(0, Number(e.target.value) || 0); S.agentEdits[e.target.dataset.qin] = v; renderView(); }
 });
 document.addEventListener('input', (e) => {
   if (e.target.id === 'msg') { e.target.style.height = 'auto'; e.target.style.height = Math.min(160, e.target.scrollHeight) + 'px'; $('#send').disabled = !e.target.value.trim(); }
