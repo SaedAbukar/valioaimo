@@ -68,8 +68,9 @@ def parse_request(gw, s: dict, args: dict) -> dict:
         a = args["answer"]
         brief = U.apply_answer(d["brief"], a["field"], a["value"], today, recipes)
     elif d.get("brief") and d["brief"].get("event") and (g := U.parse_change(args.get("text", ""))) and not U.is_event_new(args.get("text", "")):
-        if d.get("order") and d["order"]["status"] == "ordered":
-            gw.backend.release(d["order"])  # the amended order re-reserves on place_order
+        if d.get("order") and d["order"]["status"] == "ordered" and not d["order"].get("released"):
+            gw.backend.release(d["order"])  # re-plan on the stock this order held; place_order re-reserves,
+            d["order"]["released"] = True   # a declined amendment takes it back (approvals._decide)
         brief = U.rescale(d["brief"], g)
         brief["changed"] = {"guests": g}
     else:

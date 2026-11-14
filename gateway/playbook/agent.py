@@ -11,6 +11,7 @@ import re
 from ..util import iso, new_id
 from . import cards as C
 from . import understand as U
+from .engine import GuardFailed, NotFound
 
 STATUS_ORDER = ["planning", "waiting", "ordered", "delivered", "done"]
 STATUS_LABEL = {"planning": "Planning", "waiting": "Waiting for OK", "ordered": "Ordered", "delivered": "Delivered", "done": "Done"}
@@ -20,7 +21,7 @@ class ChefAssistant:
     def __init__(self, gw):
         self.gw = gw
         self.E = gw.engine
-        self.convs: dict[str, dict] = {}
+        self.convs: dict[str, dict] = gw.chat_convs  # persisted with the gateway (persist.py)
 
     # ----------------------------------------------------------- conversations
     def new_conversation(self, buyer_id: str = "BUY-POHJOLA", title: str | None = None) -> dict:
@@ -127,6 +128,8 @@ class ChefAssistant:
     def action(self, cid: str, action: str, payload: dict | None = None, by: str | None = None) -> dict:
         c = self.convs[cid]
         payload = payload or {}
+        if payload.get("sessionId") and payload["sessionId"] not in c["sessionIds"]:  # a card acts on its own conversation only
+            raise NotFound("That order is not part of this conversation.", fix={"call": "GET /v1/chats/{id}"})
         s = self.E.sessions.get(payload.get("sessionId")) or self._session(c)
         replan = {"basket", "needs_ok", "choice", "cant_do", "tip"}
         cards: list[dict] = []
@@ -148,7 +151,7 @@ class ChefAssistant:
             out = self._call(s, "request_approval")
             cards = [C.waiting(out["approval"])]
         elif action == "approve":
-            cards = self.decide(s["sessionId"], True, by or "Laura Virtanen")
+            cards = self.decide(s["sessionId"], True, by)
         elif action == "delivered":
             o = s["data"]["order"]
             o["status"] = "delivered"
@@ -166,8 +169,13 @@ class ChefAssistant:
         s = self.E.session(sid)
         appr = s["data"]["approval"]
         people = self.gw.buyers[s["buyerId"]]["approvers"]
-        person = next((p for p in people if by in (p["name"], p["id"])), None) or \
-            next(p for p in people if p["id"] == appr["approver"]["id"])
+        # by: the approver's own person id (from their credential); None only for in-process demo recordings,
+        # which act as the approver the request was addressed to. Never someone else's approver.
+        want = by or appr["approver"]["id"]
+        person = next((p for p in people if want in (p["name"], p["id"])), None)
+        if person is None:
+            raise GuardFailed("Only a named approver of this customer can decide.", guard="named_approver",
+                              fix={"credential": "the approver's own"})
         decide_approval(self.gw, s, ok, person)
         if not ok:
             return [C.card("needs_ok", title="Not approved", text=f"{person['name'].split()[0]} said not now. It stays in Planning.", actions=[])]

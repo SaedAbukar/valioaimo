@@ -98,7 +98,14 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
         if (wait := limit.check(me.agent_id)) is not None:
             return _dump({"status": 429, "error": "rate_limited", "retryAfter": wait, "fix": {"retryAfterSeconds": wait}})
         try:
-            if session_id:
+            if name == "start_session":  # always the caller's own account, whatever the arguments say
+                if args.get("buyerId") not in (None, me.buyer_id) or args.get("agentId") not in (None, me.agent_id):
+                    raise auth.AuthError(403, "forbidden", f"This agent acts only for {me.buyer_id}.")
+                args = {"buyerId": me.buyer_id, "agentId": me.agent_id, "channel": "mcp"}
+                session_id = None
+            elif not session_id:
+                raise auth.AuthError(422, "bad_input", "sessionId is required (start one with start_session).")
+            else:
                 authz.own_session(G(), me, session_id)
             return _dump(G().engine.call(session_id, name, args, actor=me.label if name == "start_session" else None))
         except (PlaybookError, auth.AuthError) as e:

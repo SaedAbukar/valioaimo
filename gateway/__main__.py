@@ -41,7 +41,7 @@ from .ratelimit import RateLimiter  # noqa: E402
 from .observability import RequestLog, audit_rejection  # noqa: E402
 from .events import Busy  # noqa: E402
 from . import ops, seller  # noqa: E402
-from .playbook.engine import NotFound, validate_input  # noqa: E402
+from .playbook.engine import GuardFailed, NotFound, validate_input  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
 from .playbook.tools import decide_approval  # noqa: E402
 from .analytics import engine as insight_engine, views  # noqa: E402
@@ -159,8 +159,8 @@ def make_app(live: bool = True) -> Starlette:
         audit_rejection(g, c.label if c else "anonymous", c.buyer_id if c else None, req.path_params.get("tool") or route,
                         status, body_, trace_id=sid if sid in g.engine.sessions else None)
 
-    def own_session(req: Request) -> tuple[auth.Caller, dict]:
-        c = caller(req, "agent", "ops")
+    def own_session(req: Request, *kinds: str) -> tuple[auth.Caller, dict]:
+        c = caller(req, *(kinds or ("agent", "ops")))  # operations may read a session; only its agent drives it
         return c, authz.own_session(gw(), c, req.path_params["sid"])
 
     @guarded
@@ -185,9 +185,9 @@ def make_app(live: bool = True) -> Starlette:
 
     @guarded
     async def tool(req: Request):
-        _, s = own_session(req)
+        c, s = own_session(req, "agent")
         return replay(await off_loop(gw().engine.call, s["sessionId"], req.path_params["tool"], await body(req),
-                                             idempotency_key=req.headers.get("idempotency-key")))
+                                     actor=c.label, idempotency_key=req.headers.get("idempotency-key")))
 
     @guarded
     async def session_events(req: Request):
@@ -397,7 +397,10 @@ def make_app(live: bool = True) -> Starlette:
         auth.same_buyer(c, s["buyerId"])
         b = await body(req)
         key = req.headers.get("idempotency-key") or b.pop("idempotencyKey", None)
-        ok = bool(b.get("ok", True))
+        if not isinstance(b.get("ok"), bool):
+            raise GuardFailed("Send the decision as a JSON boolean: ok true to approve, false to decline.", guard="bad_input",
+                              fix={"example": {"ok": True, "note": "Big week, fine."}})
+        ok = b["ok"]
 
         def decide() -> dict:
             conv = next((cv for cv in agent().convs.values() if sid in cv["sessionIds"]), None)
@@ -445,6 +448,8 @@ def make_app(live: bool = True) -> Starlette:
                 raise auth.AuthError(403, "forbidden", "Only a named approver, with their own credential, can approve or decline.")
             if b["action"] == "decline":
                 sid = (b.get("payload") or {}).get("sessionId") or cv["sessionIds"][-1]
+                if sid not in cv["sessionIds"]:
+                    raise NotFound("That order is not part of this conversation.", fix={"call": "GET /v1/chats/{id}"})
                 cards = agent().decide(sid, False, c.person_id)
                 agent()._say(cv, cards, sid)
                 return JSONResponse({"conversation": agent().public(cv), "cards": cards})

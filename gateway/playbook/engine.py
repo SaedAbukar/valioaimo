@@ -117,6 +117,8 @@ class Engine:
         self.idem: dict[str, dict] = {}  # "scope|key" -> {hash, response, at}
         self.locks: dict[str, "threading.RLock"] = {}  # one lock per session: its calls run one at a time
         self._locks_guard = threading.Lock()
+        self._idem_guard = threading.Lock()
+        self._idem_locks: dict[str, threading.Lock] = {}
 
     def lock_for(self, sid: str):
         with self._locks_guard:
@@ -131,7 +133,9 @@ class Engine:
             return fn()
         h = sha256_hex(canonical(args))
         k = f"{scope}|{key}"
-        with self.gw.lock:
+        with self._idem_guard:
+            lock = self._idem_locks.setdefault(k, threading.Lock())
+        with lock:  # one lock per key: a retry waits for the first call; other work never waits on this
             hit = self.idem.get(k)
             if hit and self.gw.clock.now() - parse_dt(hit["at"]) < IDEMPOTENCY_TTL:
                 if hit["hash"] != h:
@@ -178,17 +182,16 @@ class Engine:
             ready = d.get("plan") and not d["plan"].get("pendingChoices") and not d["plan"].get("cantDo")
             if ready and dec in ("auto", "tell_me"):
                 out.append("place_order")
-            appr = d.get("approval") or {}
-            covered = appr.get("status") == "approved" and not appr.get("used") and \
-                d["plan"]["total"] <= appr.get("total", 0) + 0.005  # a re-quote at the same or lower total keeps the OK
+            from .approvals import covers
+            covered = covers(d.get("approval"), d.get("plan"))  # the same basket re-quoted at the same or lower total keeps the OK
             if ready and dec == "needs_ok" and covered:
                 out.append("place_order")
             elif ready and dec == "needs_ok":
                 out.append("request_approval")
             out += ["plan_basket", "parse_request"]
         elif step == "act":
-            appr = d.get("approval")
-            if appr and appr["status"] == "approved" and not appr.get("used"):
+            from .approvals import covers
+            if covers(d.get("approval"), d.get("plan")):
                 out.append("place_order")
             if not d.get("order"):  # an expired or changed offer before ordering: re-quote
                 out.append("plan_basket")
@@ -275,7 +278,7 @@ class Engine:
         s["toolCalls"] += 1
         ms = round((time.perf_counter() - t0) * 1000, 1)
         s["log"].append({"tool": tool, "step": step_id, "ms": ms, "at": iso(self.gw.clock.now())})
-        self.gw.audit.append(trace_id=s["sessionId"], actor=actor or (f"system:gateway" if step.get("run_by") == "gateway" else f"agent:{s['agentId'].split(':')[-1]}"),
+        self.gw.audit.append(trace_id=s["sessionId"], actor="system:gateway" if step.get("run_by") == "gateway" else (actor or f"agent:{s['agentId'].split(':')[-1]}"),
                              action=f"playbook.{tool}", buyer_id=s["buyerId"],
                              inputs=_trim(args), refs={"step": step_id, "n": step["n"], "playbookVersion": pb["version"], "ms": ms},
                              decision=(out.get("decision") if isinstance(out, dict) else None),
@@ -322,6 +325,8 @@ class Engine:
         return s
 
     def _rewind(self, s: dict, to_step: str):
+        from .approvals import withdraw
+        withdraw(self.gw, s, f"the request changed (back to {to_step}) while waiting for the OK")
         pb = playbook()
         n = pb["byId"][to_step]["n"]
         for st in pb["steps"]:

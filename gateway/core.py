@@ -55,6 +55,7 @@ class Gateway:
         self.insights = InsightEngine(self)
         from .seller import new_state
         self.seller_state = new_state()  # Valio Aimo seller agent: suggestions, dismissals, last run per buyer
+        self.chat_convs: dict[str, dict] = {}  # the chef app's conversations (playbook/agent.py)
         from . import persist
         self.restored = persist.load(self)
 
