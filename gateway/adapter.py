@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import time
 import urllib.request
 from datetime import date, timedelta
@@ -137,6 +138,10 @@ class AimoApiClient:
     TTL = 300
     # The API sits behind Cloudflare, which answers 403 to Python's default "Python-urllib" agent.
     UA = "aimo-agent-gateway/0.2"
+    DEADLINE = 3.0  # seconds per HTTP request
+    TRIES = 2  # one retry, with jitter
+    BREAK_AFTER = 3  # consecutive failures open the circuit
+    COOL_DOWN = 30.0  # seconds before one trial call
 
     def __init__(self, base_url: str, api_key: str, customer: str = "junction-demo"):
         self.base_url = base_url.rstrip("/")
@@ -144,28 +149,57 @@ class AimoApiClient:
         self.customer = customer
         self._cache: dict[tuple, tuple[float, dict]] = {}
         self.calls = 0
-        self.last_error: str | None = None
+        self.last_error: str | None = None  # error class only (never the URL or key)
+        self.failures = 0
+        self.open_until = 0.0
+        self.latency_ms: list[float] = []
+        self.now = time.monotonic
+        self.sleep = time.sleep
 
-    def _post(self, path: str, body: dict) -> dict | None:
+    def breaker_state(self) -> str:
+        if self.failures < self.BREAK_AFTER:
+            return "closed"
+        return "open" if self.now() < self.open_until else "half_open"
+
+    def _send(self, path: str, body: dict, timeout: float) -> dict:
         req = urllib.request.Request(self.base_url + path, data=json.dumps(body).encode(), method="POST",
                                      headers={"X-API-Key": self.api_key, "Content-Type": "application/json",
                                               "Accept": "application/json", "User-Agent": self.UA})
-        try:
-            self.calls += 1
-            with urllib.request.urlopen(req, timeout=8) as r:
-                self.last_error = None
-                return json.loads(r.read())
-        except Exception as e:  # noqa: BLE001 - fall back to fixtures
-            self.last_error = f"{type(e).__name__}: {e}"
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+
+    def _post(self, path: str, body: dict) -> dict | None:
+        """Retry once with jitter; after 3 failures in a row the circuit opens for 30 s and callers get None at once
+        (they fall back to flagged demo values). After the cool-down one trial call decides: close or open again."""
+        if self.breaker_state() == "open":
+            self.last_error = "circuit_open"
             return None
+        tries = 1 if self.breaker_state() == "half_open" else self.TRIES
+        for i in range(tries):
+            t0 = time.perf_counter()
+            try:
+                self.calls += 1
+                out = self._send(path, body, self.DEADLINE)
+                self.latency_ms = (self.latency_ms + [round((time.perf_counter() - t0) * 1000, 1)])[-200:]
+                self.failures, self.last_error = 0, None
+                return out
+            except Exception as e:  # noqa: BLE001 - fall back to fixtures
+                self.last_error = type(e).__name__
+                self.failures += 1
+                if self.failures >= self.BREAK_AFTER:
+                    self.open_until = self.now() + self.COOL_DOWN
+                    return None
+                if i + 1 < tries:
+                    self.sleep(random.uniform(0.05, 0.25))
+        return None
 
     def ping(self) -> bool:
         req = urllib.request.Request(self.base_url + "/api/ping", headers={"X-API-Key": self.api_key, "User-Agent": self.UA})
         try:
-            with urllib.request.urlopen(req, timeout=5) as r:
+            with urllib.request.urlopen(req, timeout=self.DEADLINE) as r:
                 return r.status == 200
         except Exception as e:  # noqa: BLE001
-            self.last_error = f"{type(e).__name__}: {e}"
+            self.last_error = type(e).__name__
             return False
 
     def _batch(self, path: str, ids: list[str], requested: str) -> dict[str, dict]:

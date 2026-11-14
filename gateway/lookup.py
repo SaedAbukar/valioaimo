@@ -91,7 +91,7 @@ def search(gw, query: str, qty: float | None = None, need_by: str | None = None,
     prices, avail = _live(gw, ids, nb)
     rows = _rank([_row(gw, aimo_products.by_id(i), nb, qty, prices, avail) for i in ids])
     return {"query": query, "needBy": d2s(nb), "qty": qty, "count": len(rows), "products": rows,
-            "excluded": r["excluded"], "live": bool(prices),
+            "excluded": r["excluded"], "live": bool(prices), **_fallback(gw, prices),
             "next": "To buy: start a playbook session (POST /v1/sessions) and follow next_allowed_tools."}
 
 
@@ -103,7 +103,17 @@ def price_availability(gw, product_ids: list[str], need_by: str | None = None, q
     known = [i for i in ids if recs[i]]
     prices, avail = _live(gw, known, nb)
     return {"needBy": d2s(nb), "products": [_row(gw, recs[i], nb, qty, prices, avail) for i in known],
-            "unknown": unknown, "live": bool(prices)}
+            "unknown": unknown, "live": bool(prices), **_fallback(gw, prices)}
+
+
+def _fallback(gw, prices: dict) -> dict:
+    """When the mock API is configured but did not answer, say so: prices are then demo values."""
+    client = getattr(gw, "aimo", None)
+    if not client or prices:
+        return {}
+    state = client.breaker_state() if hasattr(client, "breaker_state") else "closed"
+    return {"fallback": {"reason": "circuit open" if state == "open" else "mock API unavailable",
+                         "error": client.last_error, "priceSource": "demo-values"}}
 
 
 def product(gw, product_id: str) -> dict | None:

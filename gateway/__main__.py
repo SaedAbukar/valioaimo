@@ -13,6 +13,7 @@ The same tools are exposed over MCP: `python -m gateway.mcp_server`.
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
 from pathlib import Path
 
@@ -93,10 +94,11 @@ def make_app(live: bool = True) -> Starlette:
 
     async def health(_):
         g = gw()
-        live_ok = g.aimo.ping() if g.aimo else False
+        live_ok = await anyio.to_thread.run_sync(g.aimo.ping) if g.aimo else False
+        err_class = (g.aimo.last_error or "").split(":")[0] or None if g.aimo else "not_configured"
         return JSONResponse({"ok": True, "playbookVersion": public_playbook()["version"], "products": aimo_products.count(),
-                             "liveApi": {"configured": bool(g.aimo), "reachable": live_ok,
-                                         "error": g.aimo.last_error if g.aimo else "AIMO_API_KEY not set"}})
+                             "liveApi": {"configured": bool(g.aimo), "reachable": live_ok, "error": err_class,
+                                         "breaker": g.aimo.breaker_state() if g.aimo and hasattr(g.aimo, "breaker_state") else None}})
 
     async def playbook_ep(_):
         return JSONResponse(public_playbook())
@@ -106,6 +108,10 @@ def make_app(live: bool = True) -> Starlette:
         return auth.require(gw(), req.headers.get("authorization"), *kinds)
 
     limiter = RateLimiter.from_env()
+
+    async def off_loop(fn, *a, **k):
+        """Run gateway work (engine, lookup, adapter I/O) in a worker thread so one slow call never blocks the event loop."""
+        return await anyio.to_thread.run_sync(functools.partial(fn, *a, **k))
 
     def guarded(fn):
         async def wrap(req: Request):
@@ -139,7 +145,7 @@ def make_app(live: bool = True) -> Starlette:
         bid = b.get("buyerId") or c.buyer_id
         auth.same_buyer(c, bid)
         args = {"buyerId": bid, "agentId": c.agent_id, "channel": "api"}
-        return JSONResponse(gw().engine.call(None, "start_session", args, actor=c.label), status_code=201)
+        return JSONResponse(await off_loop(gw().engine.call, None, "start_session", args, actor=c.label), status_code=201)
 
     @guarded
     async def session_get(req: Request):
@@ -152,8 +158,8 @@ def make_app(live: bool = True) -> Starlette:
     @guarded
     async def tool(req: Request):
         c, s = own_session(req)
-        return replay(gw().engine.call(s["sessionId"], req.path_params["tool"], await body(req),
-                                       idempotency_key=req.headers.get("idempotency-key")))
+        return replay(await off_loop(gw().engine.call, s["sessionId"], req.path_params["tool"], await body(req),
+                                             idempotency_key=req.headers.get("idempotency-key")))
 
     @guarded
     async def session_events(req: Request):
@@ -175,7 +181,7 @@ def make_app(live: bool = True) -> Starlette:
         c = caller(req, "agent")
         bid = req.query_params.get("buyerId") or c.buyer_id
         auth.same_buyer(c, bid)
-        return JSONResponse(seller.for_buyer(gw(), bid))
+        return JSONResponse(await off_loop(seller.for_buyer, gw(), bid))
 
     @guarded
     async def suggestion_feedback(req: Request):
@@ -207,7 +213,7 @@ def make_app(live: bool = True) -> Starlette:
         b = await body(req)
         if not str(b.get("query", "")).strip():
             return JSONResponse({"error": "guard_failed", "message": "query is required", "fix": {"query": "lactose-free milk"}}, status_code=422)
-        return JSONResponse(lookup.search(gw(), b["query"], b.get("qty"), b.get("needBy"), b.get("excludeAllergens"),
+        return JSONResponse(await off_loop(lookup.search, gw(), b["query"], b.get("qty"), b.get("needBy"), b.get("excludeAllergens"),
                                           b.get("diet"), b.get("limit", 8)))
 
     @guarded
@@ -216,7 +222,7 @@ def make_app(live: bool = True) -> Starlette:
         b = await body(req)
         if not b.get("productIds"):
             return JSONResponse({"error": "guard_failed", "message": "productIds is required", "fix": {"productIds": ["465039"]}}, status_code=422)
-        return JSONResponse(lookup.price_availability(gw(), b["productIds"], b.get("needBy"), b.get("qty")))
+        return JSONResponse(await off_loop(lookup.price_availability, gw(), b["productIds"], b.get("needBy"), b.get("qty")))
 
     @guarded
     async def product_get(req: Request):
@@ -249,7 +255,7 @@ def make_app(live: bool = True) -> Starlette:
         if not of:
             return JSONResponse({"error": "not_found"}, status_code=404)
         auth.same_buyer(c, of.get("buyerId"))
-        return JSONResponse(trust.verify_offer(gw(), of))
+        return JSONResponse(await off_loop(trust.verify_offer, gw(), of))
 
     @guarded
     async def order_get(req: Request):
@@ -331,7 +337,7 @@ def make_app(live: bool = True) -> Starlette:
             appr = decide_approval(gw(), s, ok, {"id": c.person_id, "name": c.name}, b.get("note"))
             return {"approval": appr, "next": "The agent may now call place_order." if ok else "The order stays unplaced."}
 
-        out, replayed = gw().engine.idempotent(f"{sid}|approval|{c.person_id}", key, b, decide)
+        out, replayed = await off_loop(gw().engine.idempotent, f"{sid}|approval|{c.person_id}", key, b, decide)
         return replay({**out, "idempotentReplay": True} if replayed else out)
 
     # ---------------------------------------------------------------- chef app (a buyer's own staff, signed in)
@@ -358,7 +364,7 @@ def make_app(live: bool = True) -> Starlette:
             bid = cv["buyerId"]
         else:
             c, bid = buyer_of(req, bid=b.get("buyerId"))
-        return JSONResponse(agent().message(b.get("conversationId"), b["text"], bid))
+        return JSONResponse(await off_loop(agent().message, b.get("conversationId"), b["text"], bid))
 
     @guarded
     async def chat_action(req: Request):
@@ -372,8 +378,8 @@ def make_app(live: bool = True) -> Starlette:
                 cards = agent().decide(sid, False, c.person_id)
                 agent()._say(cv, cards, sid)
                 return JSONResponse({"conversation": agent().public(cv), "cards": cards})
-            return JSONResponse(agent().action(cv["id"], "approve", b.get("payload"), c.person_id))
-        return JSONResponse(agent().action(cv["id"], b["action"], b.get("payload")))
+            return JSONResponse(await off_loop(agent().action, cv["id"], "approve", b.get("payload"), c.person_id))
+        return JSONResponse(await off_loop(agent().action, cv["id"], b["action"], b.get("payload")))
 
     @guarded
     async def chats(req: Request):
@@ -435,7 +441,7 @@ def make_app(live: bool = True) -> Starlette:
         bid = b.get("buyerId") or c.buyer_id
         auth.same_buyer(c, bid)
         args = {**b, "buyerId": bid, "agent": "analyst" if c.kind != "agent" else (c.agent_id or "").split(":")[-1]}
-        return JSONResponse(gw().insights.call(None, "start_analysis", args), status_code=201)
+        return JSONResponse(await off_loop(gw().insights.call, None, "start_analysis", args), status_code=201)
 
     @guarded
     async def insight_tool(req: Request):
@@ -443,13 +449,13 @@ def make_app(live: bool = True) -> Starlette:
         s = gw().insights.sessions.get(req.path_params["sid"])
         if s:
             auth.same_buyer(c, s["buyerId"])
-        return JSONResponse(gw().insights.call(req.path_params["sid"], req.path_params["tool"], await body(req)))
+        return JSONResponse(await off_loop(gw().insights.call, req.path_params["sid"], req.path_params["tool"], await body(req)))
 
     @guarded
     async def ask(req: Request):
         b = await body(req)
         _, bid = buyer_of(req, bid=b.get("buyerId"))
-        return JSONResponse(state["analyst"].ask(b.get("prompt", ""), b.get("filters") or {}, bid, b.get("siteId")))
+        return JSONResponse(await off_loop(state["analyst"].ask, b.get("prompt", ""), b.get("filters") or {}, bid, b.get("siteId")))
 
     @guarded
     async def wrapped(req: Request):
