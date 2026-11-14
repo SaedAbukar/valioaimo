@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import threading
 import time
 from datetime import timedelta
 from functools import lru_cache
@@ -116,6 +117,12 @@ class Engine:
         self.tools = tools
         self.sessions: dict[str, dict] = {}
         self.idem: dict[str, dict] = {}  # "scope|key" -> {hash, response, at}
+        self.locks: dict[str, "threading.RLock"] = {}  # one lock per session: its calls run one at a time
+        self._locks_guard = threading.Lock()
+
+    def lock_for(self, sid: str):
+        with self._locks_guard:
+            return self.locks.setdefault(sid, threading.RLock())
 
     # ------------------------------------------------------------------ idempotency
     def idempotent(self, scope: str, key: str | None, args: dict, fn) -> tuple[dict, bool]:
@@ -201,10 +208,13 @@ class Engine:
         args = dict(args or {})
         key = idempotency_key or args.pop("idempotencyKey", None)
         args.pop("idempotencyKey", None)
-        if key and tool in IDEMPOTENT_TOOLS and sid:
-            out, replayed = self.idempotent(f"{sid}|{tool}", key, args, lambda: self._call(sid, tool, args, actor))
-            return {**out, "idempotentReplay": True} if replayed else out
-        return self._call(sid, tool, args, actor)
+        if not sid:
+            return self._call(sid, tool, args, actor)
+        with self.lock_for(sid):
+            if key and tool in IDEMPOTENT_TOOLS:
+                out, replayed = self.idempotent(f"{sid}|{tool}", key, args, lambda: self._call(sid, tool, args, actor))
+                return {**out, "idempotentReplay": True} if replayed else out
+            return self._call(sid, tool, args, actor)
 
     def _call(self, sid: str | None, tool: str, args: dict, actor: str | None) -> dict:
         pb = playbook()
@@ -235,13 +245,20 @@ class Engine:
             out = self.tools.start_session(self.gw, args)
             s = self._new(out, args)
         else:
-            if step_id in ("understand", "plan") and pb["byId"][step_id]["n"] < pb["byId"][s["step"]]["n"]:
-                self._rewind(s, step_id)
-            out = getattr(self.tools, tool)(self.gw, s, args)
+            snapshot = copy.deepcopy(s)  # the step is atomic: any failure (guard, schema, crash) leaves the session as it was
+            try:
+                if step_id in ("understand", "plan") and pb["byId"][step_id]["n"] < pb["byId"][s["step"]]["n"]:
+                    self._rewind(s, step_id)
+                out = getattr(self.tools, tool)(self.gw, s, args)
+                self._check_output(pb, step_id, tool, out)
+            except BaseException:
+                s.clear()
+                s.update(snapshot)
+                raise
         step = pb["byId"][step_id]
-        exit_tool = step.get("exit_tool")
-        if step.get("output") and (exit_tool is None or exit_tool == tool) and tool != "ask_user":
-            validate(step["output"], out)
+        if tool == "start_session":
+            self._check_output(pb, step_id, tool, out)
+        if step.get("output") and (step.get("exit_tool") is None or step.get("exit_tool") == tool) and tool != "ask_user":
             s["outputs"][step_id] = out
         s["step"] = step_id
         s["toolCalls"] += 1
@@ -276,6 +293,13 @@ class Engine:
             ev.emit(sid, "approval.requested", {"approvalId": ap["approvalId"], "approver": ap["approver"]["name"], "total": ap["total"]})
         elif tool == "place_order":
             ev.emit(sid, "order.placed", {"orderId": out["orderId"], "total": out["total"], "backendOrderRef": out["backendOrderRef"]})
+
+    @staticmethod
+    def _check_output(pb: dict, step_id: str, tool: str, out: dict):
+        step = pb["byId"][step_id]
+        exit_tool = step.get("exit_tool")
+        if step.get("output") and (exit_tool is None or exit_tool == tool) and tool != "ask_user":
+            validate(step["output"], out)
 
     def _new(self, out: dict, args: dict) -> dict:
         s = {"sessionId": out["sessionId"], "buyerId": out["buyerId"], "agentId": out["agentId"],

@@ -369,3 +369,64 @@ def test_chef_assistant_requotes_an_expired_offer_instead_of_failing():
     gw.clock.advance(16)
     out = a.action(r["conversation"]["id"], "order")
     assert out["cards"][0]["type"] == "delivery" and len(gw.backend.orders) == 1
+
+
+# ---------------------------------------------------------------- Task 17: per-session lock, atomic steps
+def test_failed_step_leaves_the_session_unchanged(monkeypatch):
+    import copy
+    from gateway.playbook import tools
+    from gateway.playbook.engine import GuardFailed
+    gw = Gateway()
+    sid, s = in_process_to_present(gw)
+    before = copy.deepcopy({k: v for k, v in s.items() if k != "log"})
+    real = tools.plan_basket
+
+    def broken(gw_, s_, args):
+        out = real(gw_, s_, args)
+        s_["data"]["choices"]["L1"] = "garbage"
+        out.pop("lines")  # output no longer matches the BasketPlan schema
+        return out
+
+    monkeypatch.setattr(tools, "plan_basket", broken)
+    with pytest.raises(GuardFailed):
+        gw.engine.call(sid, "plan_basket")
+    after = {k: v for k, v in gw.engine.sessions[sid].items() if k != "log"}
+    assert after == before
+
+
+def test_signing_failure_after_backend_order_releases_stock(monkeypatch):
+    from gateway.playbook import tools
+    gw = Gateway()
+    sid, s = in_process_to_present(gw)
+    stock = dict(gw.backend.stock)
+
+    def boom(*a, **k):
+        raise RuntimeError("signer down")
+
+    monkeypatch.setattr(tools, "_confirmation", boom)
+    with pytest.raises(RuntimeError):
+        gw.engine.call(sid, "place_order", {"offerIds": offer_ids(s)})
+    assert gw.backend.stock == stock and not gw.backend.orders and not gw.orders
+    assert "order" not in gw.engine.sessions[sid]["data"]
+
+
+def test_parallel_calls_on_one_session_never_mix_plan_and_offers():
+    gw = Gateway()
+    sid, s = in_process_to_present(gw)
+    errs = []
+
+    def replan():
+        try:
+            for _ in range(5):
+                gw.engine.call(sid, "plan_basket")
+        except Exception as e:  # noqa: BLE001
+            errs.append(e)
+
+    ts = [threading.Thread(target=replan) for _ in range(6)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs
+    s = gw.engine.sessions[sid]
+    assert [o["offerId"] for o in s["data"]["plan"]["offers"]] == offer_ids(s)
+    assert s["toolCalls"] == len(s["log"])
+    assert gw.engine.locks[sid]

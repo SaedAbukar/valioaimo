@@ -624,11 +624,16 @@ def _place(gw, s: dict) -> dict:
     if not ok:
         _stock_changed(short)
     order["backendOrderRef"] = gw.backend.place_order(order)["backendOrderRef"]
+    try:
+        order["confirmation"] = _confirmation(gw, s, order)
+        gw.orders[order["orderId"]] = {"sessionId": s["sessionId"], **order}
+    except BaseException:  # signing or recording failed after the backend took the order: give the stock back
+        gw.backend.release(order)
+        gw.orders.pop(order["orderId"], None)
+        raise
     if d.get("approval") and d["approval"]["status"] == "approved":
         d["approval"]["used"] = True
-    order["confirmation"] = _confirmation(gw, s, order)
     d["order"] = order
-    gw.orders[order["orderId"]] = {"sessionId": s["sessionId"], **order}
     return order
 
 
