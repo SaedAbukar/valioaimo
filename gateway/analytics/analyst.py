@@ -96,12 +96,41 @@ class Analyst:
         filters = filters or {}
         if self.client:
             try:
-                return self._ask_claude(prompt, filters, buyer_id, site_id)
+                ans = self._ask_claude(prompt, filters, buyer_id, site_id)
             except Exception as e:  # noqa: BLE001 - never leave the chef without an answer
-                ans = self._ask_rules(prompt, filters, buyer_id, site_id)
+                try:
+                    ans = self._ask_rules(prompt, filters, buyer_id, site_id)
+                except PlaybookError:
+                    ans = {}
                 ans["note"] = f"Answered with built-in rules ({type(e).__name__})."
-                return ans
-        return self._ask_rules(prompt, filters, buyer_id, site_id)
+        else:
+            try:
+                ans = self._ask_rules(prompt, filters, buyer_id, site_id)
+            except PlaybookError:  # e.g. no rows to chart
+                ans = {}
+        if not ans.get("clarify") and not _has_data(ans):  # nothing to show: ask, don't draw an empty chart
+            from .store import SOURCE
+            live = SOURCE.get() == "live"
+            intro = ("There are no live orders for that yet. Order in the chat, or switch to Demo history."
+                     if live else "I found no data for that.")
+            return self.clarify(prompt, buyer_id, intro, empty=True, filtered=any(filters.values()))
+        return ans
+
+    # ------------------------------------------------------------------ asking back
+    def clarify(self, prompt: str, buyer_id: str, intro: str, questions: list[str] | None = None, empty: bool = False,
+                filtered: bool = False) -> dict:
+        """Questions for the chef, each with quick answers (the UI adds Custom). Answers are appended to the prompt."""
+        sites = [s["name"] for s in self.gw.buyers[buyer_id]["sites"]]
+        if not questions:
+            questions = ["What should I look at?", "Which period?"]
+            if empty:
+                questions = ["Should I look at the whole year?", "What should I look at instead?"]
+                if filtered:
+                    questions.insert(1, "Should I drop the filters (kitchen, category, event type)?")
+            if len(sites) > 1 and not empty:
+                questions.append("Which kitchen?")
+        return {"clarify": True, "prompt": prompt, "intro": intro,
+                "questions": [{"q": q, "options": _options(q, sites)} for q in questions[:3]]}
 
     # ------------------------------------------------------------------ rules engine
     def interpret(self, prompt: str, filters: dict, buyer_id: str) -> tuple[dict, str | None, list[str]]:
@@ -219,6 +248,9 @@ class Analyst:
                   "If the question is vague, choose the measure and grouping that answer it best (for example 'wasting money' "
                   "means waste in euros by product or kitchen, 'how are we doing' means spend and waste_pct over months) "
                   "and say in the final sentence what you looked at. "
+                  "Only if the question cannot be mapped to the data at all, or run_query returns no rows even after you "
+                  "widen it, do not build a chart: reply with at most three short questions to the chef, one per line, "
+                  "each ending with '?', and nothing else. "
                   "Apply these page filters in every run_query: " + json.dumps(filters) + ". "
                   "Worked examples:\n" + json.dumps(pb["recipes"]) +
                   "\nFinish after explain_result with one short sentence.")
@@ -244,6 +276,10 @@ class Analyst:
             messages.append({"role": "user", "content": results})
         s = self.E.sessions[sid]
         if not s.get("chart"):
+            text = " ".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+            qs = [q.strip(" -•0123456789.)") for q in re.split(r"\n+", text) if q.strip().endswith("?")]
+            if qs:
+                return self.clarify(prompt, buyer_id, "I need a bit more to answer that.", qs)
             raise RuntimeError("the model did not build a chart")
         ex = self.E.call(sid, "explain_result")["output"]
         return self._answer(sid, steps, ex, [], "claude", s["result"]["spec"])
@@ -255,6 +291,27 @@ class Analyst:
         return {"sessionId": sid, "engine": engine, "spec": spec, "chart": s.get("chart"), "columns": res["columns"],
                 "rows": res["rows"][:300], "period": res["period"], "caption": ex["caption"], "facts": ex["facts"],
                 "assumed": assumed, "steps": steps}
+
+
+def _has_data(ans: dict) -> bool:
+    rows = ans.get("rows") or []
+    if not rows:
+        return False
+    nums = [v for r in rows for v in (r.values() if isinstance(r, dict) else r) if isinstance(v, (int, float))]
+    return any(v for v in nums)
+
+
+def _options(q: str, sites: list[str]) -> list[str]:
+    t = q.lower()
+    if re.match(r"(should|shall|do|does|did|is|are|can|would|want)\b", t):
+        return ["Yes", "No"]
+    if re.search(r"look at|measure|instead|what should", t):
+        return ["Spend", "Waste", "Orders"]
+    if re.search(r"period|when|month", t):
+        return ["Last month", "Last 3 months", "Whole year"]
+    if re.search(r"kitchen|site", t):
+        return sites[:3]
+    return ["Yes", "No"]
 
 
 def _fits(E, sid):

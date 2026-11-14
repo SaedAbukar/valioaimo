@@ -315,6 +315,52 @@ function proposalHtml(e, live) {
   </article>`;
 }
 
+// quick answers per missing fact; the chef can also type anything
+const QUICK = {
+  when: [['Tomorrow', 'tomorrow'], ['Friday', 'on Friday'], ['Next Monday', 'next Monday']],
+  howMuch: [['20 guests', 'for 20 guests'], ['50 guests', 'for 50 guests'], ['120 guests', 'for 120 guests']],
+};
+const CUSTOM_HINT = { when: 'e.g. Saturday 21.11. or in 3 days', howMuch: 'e.g. 75 guests', what: 'e.g. margherita, vegan cheese, olives', open: 'e.g. mozzarella, passata, flour, olives', yesno: 'Your answer' };
+const ASK_PREFIX = { when: 'Delivery: ', howMuch: 'Guests: ', what: 'Products or dishes: ' };
+const ASKS = { when: 'When do you need it?', howMuch: 'How many guests?', what: 'Which dishes or products?' };
+// split the agent's message into its questions; each gets Yes / No / Custom (dates and guest counts get quick answers)
+function splitQuestions(text) {
+  // sentence by sentence: each '?' sentence is a question; an example right after it ("For example: …") stays with it
+  const qs = [], intro = [];
+  const parts = String(text || '').split(/\n+|(?<=[?!.])\s+(?=\S)/).map((x) => x.replace(/^\s*(?:\d+[.)]|[-•*])\s*/, '').trim()).filter(Boolean);
+  for (const p of parts) {
+    if (/\?$/.test(p)) qs.push(p.replace(/^.*?:\s*(?=[A-Z][^:]*\?$)/, ''));  // "Three things I need: Which …?" -> the question
+    else if (qs.length && /^(for example|e\.g\.|such as|like)\b/i.test(p)) qs[qs.length - 1] += ' ' + p;
+    else if (!qs.length) intro.push(p.replace(/\s*\d+[.)]?$/, ''));
+  }
+  return { intro: intro.join(' '), qs };
+}
+function kindOf(q) {
+  if (/^(which|what) (products?|items?|dishes|food|toppings|ingredients)|what (do|should|would) you (need|like|want)/i.test(q)) return 'open';
+  if (/how many|guests|people|persons/i.test(q)) return 'howMuch';
+  if (/which day|what day|when|date|deliver/i.test(q)) return 'when';
+  return 'yesno';
+}
+function questionHtml(e, live) {
+  const { intro, qs } = splitQuestions(e.answer);
+  const ans = S.askAnswers || {};
+  const rows = qs.map((q, i) => {
+    const k = kindOf(q);
+    const opts = k === 'yesno' ? [['Yes', 'Yes'], ['No', 'No']] : k === 'open' ? [] : (QUICK[k] || []).map(([l]) => [l, l]);
+    const custom = S.askCustom === i || (k === 'open' && !ans[i])
+      ? `<form class="ask-custom" data-ask-i="${i}"><input class="custom-in" name="v" placeholder="${esc(CUSTOM_HINT[k] || 'Your answer')}" aria-label="Your answer"><button class="btn primary sm-btn" type="submit">OK</button></form>`
+      : `<button class="fchip custom ${ans[i] && !opts.some(([, v]) => v === ans[i]) ? 'on' : ''}" data-ask-custom="${i}">${ic('plus')} ${ans[i] && !opts.some(([, v]) => v === ans[i]) ? esc(ans[i]) : 'Custom…'}</button>`;
+    return `<div class="ask-row"><span>${esc(q)}</span><div class="chips">${live ? opts.map(([l, v]) => `<button class="fchip ${ans[i] === v ? 'on' : ''}" data-ask-i="${i}" data-ask-v="${esc(v)}" aria-pressed="${ans[i] === v}">${esc(l)}</button>`).join('') + custom : ''}</div></div>`;
+  }).join('');
+  const done = qs.length && qs.every((_, i) => ans[i]);
+  return `<article class="card ask-card" data-type="question">
+    <div class="card-h"><span class="ic">${ic('question')}</span>A few details first</div>
+    ${intro ? `<div class="card-t">${agentText(intro)}</div>` : ''}
+    ${rows || `<div class="card-t">${agentText(e.answer)}</div>`}
+    ${live && qs.length ? `<div class="acts"><button class="btn primary" data-ask-send ${Object.keys(ans).length ? '' : 'disabled'}>${done ? 'Send answers' : 'Send what I answered'}</button><span class="muted small">or type below</span></div>` : ''}
+  </article>`;
+}
+
 function agentView() {
   const r = S.agentRun;
   const running = r.status === 'running';
@@ -330,9 +376,10 @@ function agentView() {
   const lastProposal = r.events.map((e, i) => (e.type === 'proposal' ? i : -1)).reduce((a, b) => Math.max(a, b), -1);
   r.events.forEach((e, i) => {
     if (e.type === 'tool_call') { const say = AGENT_SAYS[e.name] || 'Working on it'; if (group[group.length - 1] !== say) group.push(say); return; }
-    if (['user', 'proposal', 'waiting_for_ok', 'done', 'stopped', 'error', 'text'].includes(e.type)) flush(false);
+    if (['user', 'proposal', 'question', 'waiting_for_ok', 'done', 'stopped', 'error', 'text'].includes(e.type)) flush(false);
     if (e.type === 'user') out.push(`<div class="msg-user">${esc(e.text.startsWith('EDIT ') ? 'Changed the amounts in the basket' : e.text)}</div>`);
     else if (e.type === 'proposal') out.push(proposalHtml(e, i === lastProposal && r.status === 'waiting_user'));
+    else if (e.type === 'question') out.push(questionHtml(e, i === r.events.length - 1 && r.status === 'waiting_user'));
     else out.push(row(e));
   });
   flush(true);
@@ -618,6 +665,16 @@ document.addEventListener('click', async (e) => {
   if (d.qrm) { if (S.agentEdits[d.qrm] === 0) delete S.agentEdits[d.qrm]; else S.agentEdits[d.qrm] = 0; return renderView(); }
   if (d.agentReset !== undefined) { S.agentEdits = {}; return renderView(); }
   if (d.agentUpdate !== undefined) { const ed = S.agentEdits; S.agentEdits = {}; return startAgent('EDIT ' + JSON.stringify(ed)); }
+  if (d.askCustom !== undefined) { S.askCustom = Number(d.askCustom); renderView(); const i = $('.custom-in'); if (i) i.focus(); return; }
+  if (d.askV !== undefined && d.askI !== undefined) { S.askAnswers = S.askAnswers || {}; S.askAnswers[d.askI] = d.askV; return renderView(); }
+  if (d.askSend !== undefined) {
+    const last = [...S.agentRun.events].reverse().find((x) => x.type === 'question');
+    const { qs } = splitQuestions(last && last.answer);
+    const a = S.askAnswers || {};
+    const msg = qs.map((q, i) => (a[i] ? `${q} ${a[i]}` : null)).filter(Boolean).join('\n');
+    S.askAnswers = {}; S.askCustom = null;
+    return msg ? startAgent(msg) : undefined;
+  }
   if (d.agentChange !== undefined) { const m = $('#msg'); if (m) { m.placeholder = 'What should change? e.g. now 250 guests, or no chocolate'; m.focus(); } return; }
   if (d.agentToggle !== undefined) { S.agentMode = !S.agentMode; store.set('agentMode', S.agentMode); return render(); }
   if (d.agentApprove || d.agentDecline) {  // the named approver decides with her own credential; the agent is woken by wait_for_update
@@ -665,6 +722,13 @@ document.addEventListener('keydown', (e) => {
   if (e.target.id === 'msg' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e.target.value); }
   if (e.key === 'Escape' && S.panel) closePanel();
 });
+document.addEventListener('submit', (e) => {  // a custom answer to one of the agent's questions
+  const f = e.target.closest && e.target.closest('form[data-ask-i]');
+  if (!f) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const v = f.querySelector('.custom-in').value.trim();
+  if (v) { S.askAnswers = S.askAnswers || {}; S.askAnswers[f.dataset.askI] = v; S.askCustom = null; renderView(); }
+}, true);
 document.addEventListener('submit', (e) => { if (e.target.id === 'composer') { e.preventDefault(); send($('#msg').value); } });
 
 // ------------------------------------------------------------------ boot
@@ -690,7 +754,7 @@ async function boot() {
     const pick = ch.chats.find((c) => c.id === last) || ch.chats[ch.chats.length - 1];
     if (pick) applyConv(await API.chatGet(pick.id));
     try { S.agentAvail = await API.agentStatus(); } catch (e) { S.agentAvail = { available: false, reason: 'Agent mode is not available.' }; }
-    S.agentMode = !!(S.agentAvail.available && store.get('agentMode', false));
+    S.agentMode = !!(S.agentAvail.available && store.get('agentMode', true));
   }
   await refresh();
 }

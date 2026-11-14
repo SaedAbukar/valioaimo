@@ -469,3 +469,12 @@ button.li::after, .ibtn::after, .new-chat::after, .recent button::after, .th::af
 .receipt-lines li > b.num { min-width: 92px; text-align: right; }
 .src-switch { margin-left: auto; } .src-switch + .seg-ctl { margin-left: 8px; }
 .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--stop); margin-right: 6px; animation: pulse 1.2s infinite ease-in-out; }
+.ask-card .ask-row { display: grid; gap: 6px; }
+.ask-card .ask-row > span { font-size: 14px; }
+.fchip.custom { border-style: dashed; color: var(--primary); }
+.ask-custom { display: inline-flex; gap: 6px; align-items: center; flex: 1 1 240px; min-width: 0; }
+.custom-in { flex: 1; min-width: 0; border: 1px solid var(--primary); border-radius: 10px; padding: 7px 10px; font-size: 14px; background: var(--surface); }
+.sm-btn { min-height: 36px; padding: 6px 14px; font-size: 14px; }
+.ask-card .ask-row { padding: 10px 0; border-top: 1px solid var(--outline); }
+.ask-card .ask-row > span { font-size: 15px; font-weight: 500; color: var(--fg); }
+.fchip.on { background: var(--primary); color: var(--on-primary); border-color: transparent; }

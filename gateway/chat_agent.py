@@ -38,12 +38,11 @@ SYSTEM = (
     "product list with one amount per product sized to the guests, and a concrete date, e.g. 'I need 12 kg vegan cheese, "
     "15 L tomato passata, 8 L oat cooking base and 20 kg flour by tomorrow'. Diets (vegan, gluten-free, nut-free) go into "
     "the product names. Do not use event words then. Call recall before any search; request_offers fetches the gaps.\n"
-    "VAGUE REQUESTS: if the chef is vague (for example 'something for a team lunch' or 'stock up for the weekend'), act "
-    "as a recommendation agent. Use the kitchen's own data first (recall, get_suggestions for seasonal Valio Aimo ideas) "
-    "and lookup_products to see what is available, then turn it into a concrete request in the chef's style with sensible "
-    "assumptions (guests 50 if not given, the next working day if no date, two or three classic Finnish dishes or staples) "
-    "and call parse_request with that concrete text. In your proposal say clearly what you assumed and recommended and "
-    "why, so the chef can change it. Ask a question only if nothing sensible can be assumed.\n"
+    "ASK, NEVER ASSUME: after parse_request, look at its 'missing' list and at anything else you would have to guess "
+    "(how many guests, which day, which dishes or products, diets). Do not fill gaps yourself and do not call ask_user. "
+    "Stop and ask the chef in one short message: a question per missing fact, at most three. You may suggest options "
+    "(for a pizza party: 'cheese, passata, flour, toppings?'), but wait for their answer. When they answer, call "
+    "parse_request again with the whole request in their words plus the answers, and carry on.\n"
     "CONFIRM FIRST: after check_basket and render_cards, do NOT order yet. Stop and reply to the chef in 2-4 short "
     "sentences: what you understood (event, guests, date, diets), the products you recommend from plan_basket (the main "
     "ones, with amounts), the total, and whether it needs an OK and from whom. Ask them to confirm or say what to change. "
@@ -92,7 +91,7 @@ class Run:
             self.events.append({"seq": len(self.events) + 1, "type": type_, "at": round(time.time(), 3), **data})
             if type_ in ("done", "stopped", "error"):
                 self.status = type_
-            if type_ == "proposal":
+            if type_ in ("proposal", "question"):
                 self.status = "waiting_user"  # the chef confirms or changes it
             self.cond.notify_all()
 
@@ -182,6 +181,13 @@ class ChatAgent:
                 if run.ordered:
                     run.emit("done", answer=answer)
                 else:
+                    brief = next((e.get("brief") for e in reversed(run.events) if e["type"] == "tool_result" and e["name"] == "parse_request" and e.get("ok")), None)
+                    planned = any(e["type"] == "tool_result" and e["name"] == "plan_basket" and e.get("ok") and
+                                  e["seq"] > max((x["seq"] for x in run.events if x["type"] == "tool_result" and x["name"] == "parse_request"), default=0)
+                                  for e in run.events)
+                    if not planned:  # nothing planned since the last request: the agent is asking for what is missing
+                        run.emit("question", answer=answer, missing=(brief or {}).get("missing", []), brief=brief)
+                        return
                     plan = next((e for e in reversed(run.events) if e["type"] == "tool_result" and e["name"] == "plan_basket" and e.get("ok")), None)
                     chk = next((e for e in reversed(run.events) if e["type"] == "tool_result" and e["name"] == "check_basket" and e.get("ok")), None)
                     run.emit("proposal", answer=answer, plan=plan and plan.get("plan"), decision=chk and chk.get("decision"),
@@ -220,6 +226,11 @@ class ChatAgent:
         extra = {}
         if name == "start_session":
             extra["sessionId"] = d.get("sessionId")
+        if name == "parse_request":
+            out_b = out or {}
+            extra["brief"] = {"missing": out_b.get("missing", []), "complete": out_b.get("complete"),
+                              "guests": (out_b.get("event") or {}).get("guests"), "when": (out_b.get("when") or {}).get("value"),
+                              "what": (out_b.get("what") or {}).get("value")}
         if name == "plan_basket":
             extra["plan"] = {"total": out.get("total"), "perGuest": out.get("perGuest"),
                              "lines": [{k: l.get(k) for k in ("productId", "name", "qty", "unit", "unitPrice", "lineTotal", "deliveryDate", "why", "source")}

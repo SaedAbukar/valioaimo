@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const A = () => window.AimoApp;
-const I = { source: 'demo', tab: 'year', site: '', card: 0, wrapped: null, ex: { filters: {}, prompt: '', answer: null, loading: false, view: 'chart', steps: false, asked: [] } };
+const I = { source: 'demo', tab: 'year', site: '', card: 0, wrapped: null, ex: { clar: { answers: {}, custom: null }, filters: {}, prompt: '', answer: null, loading: false, view: 'chart', steps: false, asked: [] } };
 const STARTERS = ['Spend by month', 'Top 10 products by spend, rest as other', 'Waste % by kitchen compared to previous period, last 3 months',
   'Category mix per kitchen', 'Carbon footprint by category, share', 'Orders by weekday and kitchen as a heatmap', 'Spend and waste % by product'];
 const STEP_WORDS = { start_analysis: 'Opened your data', describe_data: 'Looked at what can be asked', get_values: 'Checked the values', run_query: 'Asked the question',
@@ -88,6 +88,19 @@ function exploreView() {
   let body = '';
   if (ex.loading) body = '<div class="typing" role="status"><i></i>Asking your data</div>';
   else if (a && a.offline) body = `<div class="card"><div class="card-t">This preview has a few recorded questions. Try one:</div><div class="chips">${a.examples.map((e) => `<button class="fchip" data-ask="${esc(e)}">${esc(e)}</button>`).join('')}</div></div>`;
+  else if (a && a.clarify) {
+    const ans = ex.clar.answers;
+    const rows = a.questions.map((q, i) => {
+      const own = ans[i] && !q.options.includes(ans[i]);
+      const custom = ex.clar.custom === i
+        ? `<form class="ask-custom" data-iclar-i="${i}"><input class="custom-in" placeholder="Your answer" aria-label="Your answer"><button class="btn primary sm-btn" type="submit">OK</button></form>`
+        : `<button class="fchip custom ${own ? 'on' : ''}" data-iclar-custom="${i}">${ic('plus')} ${own ? esc(ans[i]) : 'Custom…'}</button>`;
+      return `<div class="ask-row"><span>${esc(q.q)}</span><div class="chips">${q.options.map((o) => `<button class="fchip ${ans[i] === o ? 'on' : ''}" data-iclar-q="${i}" data-iclar-v="${esc(o)}" aria-pressed="${ans[i] === o}">${esc(o)}</button>`).join('')}${custom}</div></div>`;
+    }).join('');
+    body = `<article class="card ask-card" data-type="question"><div class="card-h"><span class="ic">${ic('question')}</span>A few details first</div>
+      <div class="card-t">${esc(a.intro)}</div>${rows}
+      <div class="acts"><button class="btn primary" data-iclar-send ${Object.keys(ans).length ? '' : 'disabled'}>Ask again</button><span class="muted small">or type a new question above</span></div></article>`;
+  }
   else if (a && a.error) body = `<div class="card" data-type="cant_do"><div class="card-t">${esc(a.error)}</div></div>`;
   else if (a) {
     body = `<article class="answer">
@@ -142,6 +155,7 @@ async function ask(prompt) {
   } catch (e) { answer = { error: e.message || 'That question could not be answered.' }; }
   if (seq !== I.ex.seq) return;  // a newer question was asked meanwhile
   I.ex.answer = answer;
+  I.ex.clar = { answers: {}, custom: null };
   I.ex.loading = false;
   if (S.view === 'insights') A().renderView();
 }
@@ -151,11 +165,25 @@ async function click(t, d) {
   if (d.itab) { I.tab = d.itab; A().renderView(); await load(); return true; }
   if (d.ycard) { const n = (I.wrapped.cards || []).length; I.card = Math.max(0, Math.min(n - 1, I.card + +d.ycard)); A().renderView(); return true; }
   if (d.ask) { await ask(d.ask); return true; }
+  if (d.iclarCustom !== undefined) { I.ex.clar.custom = Number(d.iclarCustom); A().renderView(); const el = document.querySelector('.custom-in'); if (el) el.focus(); return true; }
+  if (d.iclarQ !== undefined) { I.ex.clar.answers[d.iclarQ] = d.iclarV; A().renderView(); return true; }
+  if ('iclarSend' in d) {  // the chef's answers go back with the original question
+    const a = I.ex.answer, ans = I.ex.clar.answers;
+    a.questions.forEach((q, i) => { if (/drop the filters/i.test(q.q) && ans[i] === 'Yes') I.ex.filters = {}; });
+    const inst = a.questions.findIndex((q, i) => /instead/i.test(q.q) && ans[i]);  // "look at X instead" replaces the question
+    const extra = a.questions.map((q, i) => (i !== inst && ans[i] && ans[i] !== 'No' ? (ans[i] === 'Yes' ? q.q.replace(/^should i /i, '').replace(/\?$/, '') : ans[i]) : null)).filter(Boolean);
+    await ask([inst >= 0 ? ans[inst] : a.prompt.replace(/[?.]+$/, ''), ...extra].join(', '));
+    return true;
+  }
   if (d.exview) { I.ex.view = d.exview; A().renderView(); return true; }
   if ('exsteps' in d) { I.ex.steps = !I.ex.steps; A().renderView(); return true; }
   return false;
 }
 
+document.addEventListener('submit', (e) => {
+  const f = e.target.closest && e.target.closest('form[data-iclar-i]');
+  if (f) { e.preventDefault(); e.stopPropagation(); const v = f.querySelector('input').value.trim(); if (v) I.ex.clar.answers[f.dataset.iclarI] = v; I.ex.clar.custom = null; A().renderView(); }
+}, true);
 document.addEventListener('submit', (e) => { if (e.target.id === 'ask-form') { e.preventDefault(); const v = document.getElementById('ex-q').value.trim(); if (v) ask(v); } });
 document.addEventListener('change', async (e) => {
   const id = e.target.id, v = e.target.value || undefined;
