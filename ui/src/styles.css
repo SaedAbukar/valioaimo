@@ -416,3 +416,17 @@ button.li::after, .ibtn::after, .new-chat::after, .recent button::after, .th::af
   .ev-chip, .starters .fchip { flex: none; }
 }
 @media (prefers-reduced-motion: reduce) { .story-body { animation: none; } .tk:hover, .site:hover { transform: none; } }
+
+/* ===================== v5: Agent mode (Claude over the gateway's MCP) ===================== */
+.agent-toggle { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--outline-strong); background: var(--surface); color: var(--fg);
+  border-radius: var(--r-pill); padding: 6px 12px; font-size: 14px; font-weight: 600; min-height: 40px; flex: none; align-self: center; }
+.agent-toggle svg { width: 18px; height: 18px; }
+.agent-toggle[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+.agent-toggle:disabled { opacity: .5; cursor: default; }
+.agent-run { gap: 6px; }
+.agent-meta { color: var(--muted); font-size: 14px; display: flex; gap: 6px; align-items: center; } .agent-meta svg { width: 18px; height: 18px; }
+.agent-step { display: grid; gap: 2px; padding: 6px 12px; border-left: 3px solid var(--outline); background: var(--surface); border-radius: 0 10px 10px 0; min-width: 0; }
+.agent-step code { font-size: 13px; font-weight: 600; } .agent-step small { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.agent-step.ok { border-left-color: var(--primary); } .agent-step.refused { border-left-color: var(--warn); }
+.agent-text { background: var(--surface-2); border-radius: 14px; padding: 10px 14px; font-size: 15px; }
+@media (max-width: 860px) { .agent-toggle span, .agent-toggle { padding: 6px 10px; } }

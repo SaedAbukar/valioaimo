@@ -90,6 +90,10 @@ const Live = {
   kitchens: (bid) => Live.j('/v1/kitchens?buyerId=' + bid),
   // the demo switch to Valio Aimo's side uses the operations demo credential (demo mode only)
   ops: (path) => Live.j('/v1/ops/' + path, undefined, 'demo-ops'),
+  // Agent mode: a Claude agent orders through the gateway's MCP endpoint (server side, with the buyer's agent credential)
+  agentStatus: () => Live.j('/v1/agent/status'),
+  agentRun: (text) => Live.j('/v1/agent/runs', { text }),
+  agentEvents: (rid, after) => Live.j(`/v1/agent/runs/${rid}/events?after=${after}&wait=20`),
 };
 
 const Replay = (() => {
@@ -232,13 +236,55 @@ function composer() {
   return `<div class="composer-zone"><form class="composer" id="composer">
     <label for="msg" class="sr" style="position:absolute;left:-9999px">Message</label>
     <textarea id="msg" rows="1" placeholder="${esc(ph)}" ${S.busy ? 'disabled' : ''}></textarea>
+    ${S.mode === 'live' ? `<button type="button" class="agent-toggle" data-agent-toggle aria-pressed="${!!S.agentMode}" ${S.agentAvail && S.agentAvail.available ? '' : 'disabled'} title="${esc(S.agentAvail && !S.agentAvail.available ? S.agentAvail.reason : 'A Claude agent orders through the gateway over MCP')}">${ic('spark')} Agent</button>` : ''}
     <button type="button" class="ibtn ${S.recording ? 'rec' : ''}" id="mic" aria-label="${S.recording ? 'Stop listening' : 'Speak'}">${ic('mic')}</button>
     <button type="submit" class="ibtn send" id="send" aria-label="Send" disabled>${ic('send')}</button>
-  </form><div class="hint">Answers come as cards. Tap “Why?” on any card for the details.</div></div>`;
+  </form><div class="hint">${S.agentMode ? `Agent mode: ${esc(S.agentAvail.model)} orders through the gateway over MCP. Every call is shown as it happens.`
+    : S.agentAvail && !S.agentAvail.available && S.mode === 'live' ? esc(S.agentAvail.reason) : 'Answers come as cards. Tap “Why?” on any card for the details.'}</div></div>`;
 }
 
 // ------------------------------------------------------------------ chat
+function agentView() {
+  const r = S.agentRun;
+  const row = (e) => {
+    if (e.type === 'start') return `<div class="agent-meta">${ic('spark')} ${esc(e.model)} connected ${esc(e.via)} · ${e.tools} tools</div>`;
+    if (e.type === 'tool_call') return `<div class="agent-step"><code>→ ${esc(e.name)}</code>${Object.keys(e.args || {}).length ? `<small>${esc(JSON.stringify(e.args).slice(0, 140))}</small>` : ''}</div>`;
+    if (e.type === 'tool_result') return `<div class="agent-step ${e.ok ? 'ok' : 'refused'}"><code>${e.ok ? '←' : '✕'} ${esc(e.name)}</code><small>${e.ok ? '' : esc((e.status ? e.status + ' · ' : '') + (e.guard ? e.guard + ' · ' : ''))}${esc(e.summary || '')}${!e.ok && e.fix ? ' · fix: ' + esc(JSON.stringify(e.fix).slice(0, 160)) : ''}</small></div>`;
+    if (e.type === 'text') return `<div class="agent-text">${esc(e.text)}</div>`;
+    if (e.type === 'waiting_for_ok') {
+      const done = S.uiDone['appr:' + e.approvalId];
+      return `<article class="card" data-type="needs_ok"><div class="card-h"><span class="ic">${ic('ok')}</span>Needs your OK</div>
+        <div class="card-t">The agent asked ${esc(e.approver)} to OK €${Number(e.total || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}.</div>
+        ${e.reasons && e.reasons.length ? `<p class="muted" style="margin:0">${esc(e.reasons.join(' '))}</p>` : ''}
+        <div class="acts">${done ? `<span class="done-note">${ic('check')} ${esc(done)}</span>` : `<p class="muted" style="margin:0">Demo: you are now ${esc(e.approver)}.</p><button class="btn primary" data-agent-approve="${e.approvalId}">OK, order it</button><button class="btn" data-agent-decline="${e.approvalId}">Not now</button>`}</div></article>`;
+    }
+    if (e.type === 'done') return `<article class="card" data-type="delivery"><div class="card-h"><span class="ic">${ic('truck')}</span>From the agent</div><div class="card-t">${esc(e.answer)}</div></article>`;
+    if (e.type === 'stopped' || e.type === 'error') return `<div class="agent-meta">${esc(e.reason)}</div>`;
+    return '';
+  };
+  return `<div class="wrap"><div class="thread"><div class="msg-user">${esc(r.text)}</div><div class="turn agent-run">${r.events.map(row).join('')}</div>
+    ${r.status === 'running' ? `<div class="typing" role="status"><i></i>The agent is working</div>` : ''}</div></div>`;
+}
+
+async function startAgent(text) {
+  S.agentRun = { text, events: [], status: 'running' };
+  renderView();
+  try {
+    const { runId } = await API.agentRun(text);
+    S.agentRun.id = runId;
+    let after = 0;
+    while (S.agentRun && S.agentRun.id === runId) {
+      const r = await API.agentEvents(runId, after);
+      S.agentRun.events.push(...r.events); after = r.next; S.agentRun.status = r.status;
+      renderView();
+      if (r.status !== 'running') break;
+    }
+    refresh();
+  } catch (e) { S.agentRun.status = 'error'; S.agentRun.events.push({ type: 'error', reason: e.message }); renderView(); }
+}
+
 function chatView() {
+  if (S.agentMode && S.agentRun) return agentView();
   const c = conv();
   if (!c || !c.thread.length) {
     const k = KITCHENS[S.buyerId];
@@ -287,6 +333,7 @@ function findCard(id) { return allCards().find((c) => c.id === id); }
 async function send(text) {
   text = text.trim();
   if (!text || S.busy) return;
+  if (S.agentMode) { const m = $('#msg'); if (m) m.value = ''; return startAgent(text); }
   const c = conv();
   if (c) c.thread.push({ role: 'user', text });
   else { S.pending = { id: 'tmp', thread: [{ role: 'user', text }], title: text.slice(0, 40) }; S.convs.tmp = S.pending; S.convId = 'tmp'; }
@@ -464,6 +511,12 @@ document.addEventListener('click', async (e) => {
   if (!t) return;
   const d = t.dataset;
   if ('close' in d) return closePanel();
+  if (d.agentToggle !== undefined) { S.agentMode = !S.agentMode; store.set('agentMode', S.agentMode); return render(); }
+  if (d.agentApprove || d.agentDecline) {  // the named approver decides with her own credential; the agent is woken by wait_for_update
+    const aid = d.agentApprove || d.agentDecline; const ok = !!d.agentApprove;
+    try { await Live.j(`/v1/approvals/${aid}`, { ok }, 'demo-human-usr-lvirtanen'); S.uiDone['appr:' + aid] = ok ? 'Approved by you' : 'Declined'; } catch (e) { toast(e.message); }
+    return renderView();
+  }
   for (const m of [window.AimoOrders, window.AimoInsights, window.AimoKitchens]) if (m && await m.click(t, d)) return;
   if (d.go) {
     if (d.go === 'new') { S.convId = null; S.view = 'chat'; S.panel = null; return render(); }
@@ -525,6 +578,8 @@ async function boot() {
     const last = store.get('conv', null);
     const pick = ch.chats.find((c) => c.id === last) || ch.chats[ch.chats.length - 1];
     if (pick) applyConv(await API.chatGet(pick.id));
+    try { S.agentAvail = await API.agentStatus(); } catch (e) { S.agentAvail = { available: false, reason: 'Agent mode is not available.' }; }
+    S.agentMode = !!(S.agentAvail.available && store.get('agentMode', false));
   }
   await refresh();
 }

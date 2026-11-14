@@ -84,4 +84,7 @@ The usual path is `parse_request {text}`, then `recall`, then `request_offers` (
 
 ## The chef app (first-party UI, not for agents)
 
+Agent mode (a Claude agent ordering over `/mcp`, [AGENT_MODE.md](AGENT_MODE.md)): `GET /v1/agent/status`, `POST /v1/agent/runs {text}`, `GET /v1/agent/runs/{id}/events?after&wait`.
+
+
 `/v1/chat`, `/v1/chat/{id}/actions`, `/v1/board`, `/v1/orders/history`, `/v1/insights/*`, `/v1/kitchens` need the buyer's chef-app credential; approving in chat needs the approver's own. The insight playbook (`/v1/insights/sessions/...`, buyer from the credential) is also usable by agents: datasets `orders`, `agent_activity`, `demand`; calcs `forecast` and `anomaly`; tool `explain_change`. See [PLAYBOOK.md](PLAYBOOK.md).

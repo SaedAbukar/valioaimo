@@ -9,11 +9,11 @@
 | Completion rate | 100% |
 | 409 per run (refused out of order / re-quote) | 0.18 |
 | 422 per run (bad input) | 0.0 |
-| 429 per run (rate limited, honoured Retry-After) | 4.45 |
-| Call latency p50 / p95 | 14.9 ms / 161.0 ms |
-| Run time p50 / p95 | 0.8 s / 5.6 s |
-| Determinism (reset, same outcome and total) | 100% |
-| Wall time, concurrent phase | 11.63 s |
+| 429 per run (rate limited, honoured Retry-After) | 7.82 |
+| Call latency p50 / p95 | 5.5 ms / 46.0 ms |
+| Run time p50 / p95 | 2.5 s / 11.1 s |
+| Determinism (reset, same outcome and total) | 86% |
+| Wall time, concurrent phase | 18.06 s |
 
 ## Invariants (from the gateway's own records)
 
@@ -24,23 +24,23 @@
 | Orders cite offers that verify | yes | 9 confirmations and their offers verify |
 | No order without authority | yes | every order was auto, tell-me or approved |
 | Approvals by named humans | yes | 2 decisions, all by named approvers |
-| Audit chain verifies | yes | 169 events, chain intact |
+| Audit chain verifies | yes | 140 events, chain intact |
 
 ## Runs
 
 | Agent | Scenario | Outcome | Decision | Total € | 409 | 422 | 429 | Re-quotes | s |
 |---|---|---|---|---|---|---|---|---|---|
-| agent-02 | allergen | cant_do |  |  | 0 | 0 | 0 | 0 | 0.295 |
-| agent-08 | allergen | cant_do |  |  | 0 | 0 | 0 | 0 | 0.314 |
-| agent-00 | milk | ordered | auto | 1370.0 | 0 | 0 | 7 | 0 | 3.631 |
-| agent-06 | milk | ordered | auto | 1370.0 | 0 | 0 | 8 | 0 | 4.129 |
-| agent-05 | out_of_order | ordered | tell_me | 100.0 | 1 | 0 | 0 | 0 | 0.847 |
-| agent-01 | over_limit | approved_ordered | needs_ok | 4110.0 | 0 | 0 | 11 | 0 | 5.635 |
-| agent-07 | over_limit | approved_ordered | needs_ok | 4110.0 | 0 | 0 | 10 | 0 | 5.127 |
-| agent-04 | race | ordered | auto | 822.0 | 0 | 0 | 1 | 0 | 0.623 |
-| agent-03 | retry | ordered | auto | 74.4 | 0 | 0 | 0 | 0 | 0.372 |
-| agent-09 | retry | ordered | auto | 74.4 | 0 | 0 | 0 | 0 | 0.372 |
-| agent-stale | stale_offer | ordered | auto | 196.0 | 1 | 0 | 12 | 1 | 5.993 |
+| agent-02 | allergen | cant_do |  |  | 0 | 0 | 0 | 0 | 0.15 |
+| agent-08 | allergen | cant_do |  |  | 0 | 0 | 0 | 0 | 0.152 |
+| agent-00 | milk | ordered | auto | 1370.0 | 0 | 0 | 12 | 0 | 6.05 |
+| agent-06 | milk | ordered | auto | 1370.0 | 0 | 0 | 14 | 0 | 7.553 |
+| agent-05 | out_of_order | ordered | tell_me | 100.0 | 1 | 0 | 0 | 0 | 1.014 |
+| agent-01 | over_limit | approved_ordered | needs_ok | 4110.0 | 0 | 0 | 20 | 0 | 11.05 |
+| agent-07 | over_limit | approved_ordered | needs_ok | 4110.0 | 0 | 0 | 23 | 0 | 12.048 |
+| agent-04 | race | ordered | auto | 822.0 | 0 | 0 | 5 | 0 | 2.541 |
+| agent-03 | retry | ordered | auto | 74.4 | 0 | 0 | 0 | 0 | 0.177 |
+| agent-09 | retry | ordered | auto | 74.4 | 0 | 0 | 0 | 0 | 0.177 |
+| agent-stale | stale_offer | ordered | auto | 196.0 | 1 | 0 | 12 | 1 | 6.009 |
 
 ## LLM agents
 

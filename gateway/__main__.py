@@ -577,6 +577,38 @@ def make_app(live: bool = True) -> Starlette:
         async with mcp_srv.session_manager.run():
             yield
 
+    # ---------------------------------------------------------------- the chat's Agent mode (Claude over /mcp)
+    from .chat_agent import ChatAgent
+    chat_agent = ChatAgent(os.environ.get("AIMO_PUBLIC_URL", "http://127.0.0.1:" + os.environ.get("PORT", "8000")))
+
+    @guarded
+    async def agent_status(req: Request):
+        caller(req, "user", "human")
+        return JSONResponse(chat_agent.available())
+
+    @guarded
+    async def agent_runs(req: Request):
+        c, bid = buyer_of(req)  # the kitchen's own chef-app user; agents and operations do not use the chef app
+        if not chat_agent.available()["available"]:
+            return JSONResponse({"error": "unavailable", **chat_agent.available()}, status_code=503)
+        text = str((await body(req)).get("text", "")).strip()
+        if not text:
+            raise GuardFailed("Say what the kitchen needs.", guard="bad_input", fix={"example": {"text": "I need 1,000 L lactose-free milk by Monday"}})
+        token = gw().buyers[bid]["agents"][0]["apiKey"]  # the buyer's registered agent credential, used only against /mcp
+        run = chat_agent.start(bid, token, text[:2000])
+        return JSONResponse({"runId": run.id, "model": run.events[0]["model"] if run.events else None}, status_code=201)
+
+    @guarded
+    async def agent_events(req: Request):
+        c = caller(req, "user", "human")
+        run = chat_agent.runs.get(req.path_params["rid"])
+        if not run:
+            raise NotFound("No such agent run.")
+        auth.same_buyer(c, run.buyer_id)
+        after, wait = int(req.query_params.get("after", 0)), float(req.query_params.get("wait", 0))
+        evs = await off_loop(run.wait, after, wait)
+        return JSONResponse({"runId": run.id, "status": run.status, "events": evs, "next": after + len(evs)})
+
     app = Starlette(lifespan=lifespan, routes=[
         Route("/v1/orders/history/{oid}", order_detail), Route("/v1/orders/{sid}/activity", activity),
         Route("/v1/tools", tools_ep), Route("/v1/insights/playbook", insight_playbook_ep),
@@ -605,9 +637,12 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/ops/orders", ops_orders), Route("/v1/ops/metrics", ops_metrics), Route("/v1/ops/demand", ops_demand),
         Route("/v1/ops/lost-sales", ops_lost_sales), Route("/v1/ops/inventory", ops_inventory),
         Route("/v1/demo/clock", demo_clock, methods=["POST"]),
+        Route("/v1/agent/status", agent_status), Route("/v1/agent/runs", agent_runs, methods=["POST"]),
+        Route("/v1/agent/runs/{rid}/events", agent_events),
         Route("/mcp", _Asgi(mcp_asgi), methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_asgi),
     ])
     app.add_middleware(RequestLog, metrics_of=lambda: gw().metrics)
+    app.state.agent = chat_agent
     app.state.gw = gw  # the live Gateway (replaced on /v1/demo/reset); used by tests and tools
     return app
 

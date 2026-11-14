@@ -8,7 +8,8 @@ Plan: docs/superpowers/plans/2026-11-14-v5-gateway-hardening-seller-ops.md (Task
 - Bench (7): `scripts/agent_bench.py`, `make bench` → docs/BENCH.md. Live against the mock API: 100 % completion, every invariant holds, determinism 100 %. Found and fixed two oversell bugs (weekly restock, re-registered live stock).
 - Analytics (8–10): insight rails authenticated; datasets `agent_activity` and `demand`; `forecast`, `anomaly`, `explain_change`; forecast drawn dashed with a band, a running month as a hollow dot.
 - Operations view (11): `/v1/ops/metrics`, `/demand`, `/lost-sales` (k ≥ 3), ops MCP mode, Kitchens › Valio Aimo view; demo seed with four kitchens.
-- Tests: 279 passed + 1 opt-in live test (passed). Live: `make agent` (both flows on live prices), `--suggestions`, `make bench` all pass.
+- Tests: 292 passed + 1 opt-in live test (passed). Final whole-branch review: 2 Critical + 7 Important fixed (tests/gateway/test_review_fixes.py). Live: `make agent` (both flows on live prices), `--suggestions`, `make bench` all pass.
+- Agent mode in the chat: a real Claude agent (Haiku 5.5) orders through the gateway's /mcp; live runs recorded in docs/AGENT_MODE.md (milk → AUTO order; 3,000 L → Laura's OK in the UI → order). Tests: 296 passed.
 - Not built: chef-app "From Valio Aimo" suggestion card; LLM bench rows (no Anthropic key on this machine).
 - Published: artifact https://claude.ai/artifact/WemSdQFg5vy35Ki2YkeAbi version 4 (`1794666826-c172`), built from `ui/dist/artifact.html` (recorded demo; the operations view needs the live gateway).
 - Screenshots: `docs/screenshots/v2` regenerated, plus `v5-forecast-*` and `v5-valio-aimo-view-*` (390/1280, light/dark).

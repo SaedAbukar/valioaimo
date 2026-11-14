@@ -27,7 +27,7 @@ make index      # builds gateway/data/aimo_products.json from the organisers' da
 make run        # gateway + chef app on http://127.0.0.1:8000
 make agent      # an external agent places the brief's order (scripts/agent_demo.py; --suggestions for the seller agent)
 make bench      # 10 agents at once, every scenario, invariants checked from the gateway's records -> docs/BENCH.md
-make test       # 279 tests (+1 live test: AIMO_LIVE_TESTS=1)
+make test       # 296 tests (+1 live test: AIMO_LIVE_TESTS=1)
 make mcp        # MCP over stdio for AIMO_AGENT_TOKEN's agent, proxied to the running gateway's /mcp
 ```
 
@@ -96,6 +96,8 @@ python scripts/agent_demo.py --over-limit
 | Kitchens | The CRM-style view |
 
 **Same thing over MCP.** Point an MCP client at `http://127.0.0.1:8000/mcp` (Streamable HTTP, `Authorization: Bearer demo-key-pohjola`), or add `AIMO_GATEWAY_URL=http://127.0.0.1:8000 python -m gateway.mcp_server` to Claude Desktop or Claude Code (stdio), and ask for the milk order. It is the same gateway, so Laura's approval in the REST inbox wakes the MCP agent (`wait_for_update`). The tools are typed from the playbook schemas; there is no approve tool.
+
+**A real Claude agent in the chat.** With `ANTHROPIC_API_KEY` in `.env`, switch on **Agent** next to the chat input: Claude orders through the gateway's own `/mcp`, every MCP call streams into the chat, and Laura's OK wakes it ([docs/AGENT_MODE.md](docs/AGENT_MODE.md)).
 
 **If there is time (optional).**
 
