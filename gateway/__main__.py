@@ -35,7 +35,8 @@ from .core import Gateway  # noqa: E402  (after .env is loaded)
 from .playbook import insights  # noqa: E402
 from .playbook.agent import ChefAssistant  # noqa: E402
 from .playbook.engine import PlaybookError, public_playbook  # noqa: E402
-from . import manifest, discovery, lookup, auth  # noqa: E402
+from . import manifest, discovery, lookup, auth, authz  # noqa: E402
+from .playbook.approvals import inbox_for  # noqa: E402
 from .ratelimit import RateLimiter  # noqa: E402
 from .observability import RequestLog, audit_rejection  # noqa: E402
 from .events import Busy  # noqa: E402
@@ -145,11 +146,7 @@ def make_app(live: bool = True) -> Starlette:
 
     def own_session(req: Request) -> tuple[auth.Caller, dict]:
         c = caller(req, "agent", "ops")
-        s = gw().engine.session(req.path_params["sid"])
-        auth.same_buyer(c, s["buyerId"])
-        if c.kind == "agent" and c.agent_id != s["agentId"]:
-            raise auth.AuthError(403, "forbidden", "This session belongs to another agent.")
-        return c, s
+        return c, authz.own_session(gw(), c, req.path_params["sid"])
 
     @guarded
     async def sessions(req: Request):
@@ -158,7 +155,10 @@ def make_app(live: bool = True) -> Starlette:
         bid = b.get("buyerId") or c.buyer_id
         auth.same_buyer(c, bid)
         args = {"buyerId": bid, "agentId": c.agent_id, "channel": "api"}
-        return JSONResponse(await off_loop(gw().engine.call, None, "start_session", args, actor=c.label), status_code=201)
+        key = req.headers.get("idempotency-key") or b.get("idempotencyKey")
+        out, replayed = await off_loop(gw().engine.idempotent, f"{c.agent_id}|start_session", key, args,
+                                       lambda: gw().engine.call(None, "start_session", args, actor=c.label))
+        return replay({**out, "idempotentReplay": True} if replayed else out, status=200 if replayed else 201)
 
     @guarded
     async def session_get(req: Request):
@@ -261,7 +261,8 @@ def make_app(live: bool = True) -> Starlette:
         of = gw().store.get("offer", req.path_params["oid"])
         if not of:
             return JSONResponse({"error": "not_found"}, status_code=404)
-        auth.same_buyer(c, of.get("buyerId"))
+        if not authz.can_read_offer(c, of):
+            raise auth.AuthError(403, "forbidden", "This credential belongs to another customer account.")
         return JSONResponse(of)
 
     @guarded
@@ -270,7 +271,8 @@ def make_app(live: bool = True) -> Starlette:
         of = gw().store.get("offer", req.path_params["oid"])
         if not of:
             return JSONResponse({"error": "not_found"}, status_code=404)
-        auth.same_buyer(c, of.get("buyerId"))
+        if not authz.can_read_offer(c, of):
+            raise auth.AuthError(403, "forbidden", "This credential belongs to another customer account.")
         return JSONResponse(await off_loop(trust.verify_offer, gw(), of))
 
     @guarded
@@ -279,8 +281,8 @@ def make_app(live: bool = True) -> Starlette:
         o = gw().orders.get(req.path_params["oid"])
         if not o:
             return JSONResponse({"error": "not_found"}, status_code=404)
-        s = gw().engine.session(o["sessionId"])
-        auth.same_buyer(c, s["buyerId"])
+        if not authz.can_read_order(gw(), c, o):
+            raise auth.AuthError(403, "forbidden", "This credential belongs to another customer account.")
         ok, payload, detail = verify_jws(o["confirmation"]["jws"], gw().jwks()["keys"])
         return JSONResponse({**o, "confirmationVerified": ok, "confirmationPayload": payload})
 
@@ -288,22 +290,14 @@ def make_app(live: bool = True) -> Starlette:
     @guarded
     async def approval_inbox(req: Request):
         c = caller(req, "human")
-        mine = [m for m in gw().inbox if m["to"] == c.person_id or
-                (m["buyerId"] == c.buyer_id and any(a["id"] == c.person_id for a in gw().buyers[c.buyer_id]["approvers"]))]
-        out = []
-        for m in mine:
-            s = gw().engine.session(m["sessionId"])
-            out.append({**m, "approval": s["data"]["approval"], "lines": [{k: l[k] for k in ("name", "qty", "unit", "lineTotal", "deliveryDate")}
-                                                                          for l in s["data"]["plan"]["lines"]]})
-        return JSONResponse({"for": c.name, "pending": out})
+        return JSONResponse({"for": c.name, "pending": inbox_for(gw(), c.person_id, c.buyer_id)})
 
     @guarded
     async def audit_ep(req: Request):
         c = caller(req, "agent", "human", "ops")
-        sid = req.query_params.get("sessionId")
-        # a buyer sees its own trail; Valio Aimo operations see every buyer
-        ev = gw().audit.events(trace_id=sid, buyer_id=None if c.kind == "ops" else c.buyer_id, limit=300)
-        return JSONResponse({"verify": gw().audit.verify(), "events": ev})
+        ev = gw().audit.events_for(c, trace_id=req.query_params.get("sessionId"))
+        full = c.kind == "ops" and req.query_params.get("full") == "1"  # ops: re-hash the whole chain from genesis
+        return JSONResponse({"verify": gw().audit.verify(full=full), "events": ev})
 
     @guarded
     async def ops_metrics_raw(req: Request):
@@ -468,8 +462,8 @@ def make_app(live: bool = True) -> Starlette:
     async def insight_tool(req: Request):
         c = caller(req, "agent", "user", "human")
         s = gw().insights.sessions.get(req.path_params["sid"])
-        if s:
-            auth.same_buyer(c, s["buyerId"])
+        if s and not authz.can_read_analysis(c, s):
+            raise auth.AuthError(403, "forbidden", "This analysis belongs to another customer account.")
         return JSONResponse(await off_loop(gw().insights.call, req.path_params["sid"], req.path_params["tool"], await body(req)))
 
     @guarded

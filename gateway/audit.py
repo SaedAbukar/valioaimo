@@ -103,6 +103,10 @@ class AuditLedger:
             rows = self.store.db.execute(q, args).fetchall()
         return [json.loads(r[0]) for r in reversed(rows)]
 
+    def events_for(self, caller, trace_id: str | None = None, limit: int = 300) -> list[dict]:
+        """A buyer's credentials see their own trail; Valio Aimo operations see every buyer."""
+        return self.events(trace_id=trace_id, buyer_id=None if caller.kind == "ops" else caller.buyer_id, limit=limit)
+
     def verify(self, full: bool = False) -> dict:
         """Check the hash chain. Incremental by default: only events after the last verified one are hashed, and the
         last verified event is re-read to make sure it still links. full=True re-checks every event from genesis."""
@@ -124,26 +128,6 @@ class AuditLedger:
             prev = stored_hash
         self._verified = (n, prev)
         return {"ok": True, "checked": n, "newlyChecked": n - start, "brokenAt": None, "head": prev, "detail": f"{n} events, chain intact"}
-
-    def tamper(self, seq: int | None = None) -> dict:
-        """DEMO ONLY: silently edit a stored row to show tamper evidence."""
-        with self.store.lock:
-            if seq is None:
-                row = self.store.db.execute(
-                    "SELECT seq, json FROM audit WHERE json LIKE '%\"policy_decision\"%' ORDER BY seq DESC LIMIT 1").fetchone() \
-                    or self.store.db.execute("SELECT seq, json FROM audit ORDER BY seq DESC LIMIT 1").fetchone()
-            else:
-                row = self.store.db.execute("SELECT seq, json FROM audit WHERE seq=?", (seq,)).fetchone()
-            if not row:
-                return {"ok": False, "detail": "no events"}
-            ev = json.loads(row[1])
-            original = ev.get("decision")
-            ev["decision"] = "AUTO"
-            ev["reason"] = (ev.get("reason") or "") + " [edited]"
-            self.store.db.execute("UPDATE audit SET json=? WHERE seq=?", (json.dumps(ev, ensure_ascii=False), row[0]))
-            self.store.db.commit()
-        self._verified = (0, GENESIS)
-        return {"ok": True, "seq": row[0], "changed": {"decision": [original, "AUTO"]}}
 
 
 def sentence(ev: dict) -> str:

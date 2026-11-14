@@ -13,7 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from . import catalog, planner, policy, preferences, signals as sig, trust
-from .adapter import FixtureBackend, make_client
+from .adapter import Backend, FixtureBackend, make_client
 from .audit import AuditLedger
 from .clock import Clock
 from .crypto import load_or_create, verify_jws
@@ -29,7 +29,7 @@ class Gateway:
         self.metrics = Metrics()
         self.lock = threading.RLock()  # order placement: verify -> reserve -> place is atomic (no overselling)
         self.store = Store(db)
-        self.backend = FixtureBackend(self.clock)
+        self.backend: Backend = FixtureBackend(self.clock)
         self.audit = AuditLedger(self.store, self.clock)
         keys = Path(keys_dir) if keys_dir else None  # PEM files: the JWKS stays the same across restarts
         self.gateway_key = load_or_create(keys / "gw-2026-11.pem" if keys else None, "gw-2026-11")
@@ -49,8 +49,10 @@ class Gateway:
         self.inbox: list[dict] = []  # approval requests waiting for a named human
         from .playbook.engine import Engine
         from .events import Events
+        from .analytics.engine import InsightEngine
         self.engine = Engine(self)
         self.events = Events(self)
+        self.insights = InsightEngine(self)
         from . import persist
         self.restored = persist.load(self)
 

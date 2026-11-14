@@ -36,7 +36,8 @@ if ME is None or ME.kind != "agent":
     raise SystemExit("AIMO_AGENT_TOKEN is not a registered agent credential.")
 ANALYST = Analyst(GW)
 
-mcp, _fns = mcp_app.build(lambda: GW, lambda: ANALYST, lambda: ME)
+mcp, _fns = mcp_app.build(lambda: GW, lambda: ANALYST, lambda: ME,
+                          base_url=os.environ.get("AIMO_PUBLIC_URL", "http://127.0.0.1:8000"))
 globals().update(_fns)  # tools callable as module functions (tests)
 
 if __name__ == "__main__":

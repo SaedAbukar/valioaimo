@@ -19,9 +19,23 @@ import random
 import time
 import urllib.request
 from datetime import date, timedelta
+from typing import Protocol, runtime_checkable
 
 from . import catalog
 from .util import d2s, delivery_day
+
+
+@runtime_checkable
+class Backend(Protocol):
+    """What the order path needs from Valio Aimo's systems (stock, price, delivery, order intake)."""
+
+    def price(self, gtin: str) -> float: ...
+    def earliest(self, gtin: str) -> date: ...
+    def schedule(self, gtin: str) -> list[dict]: ...
+    def available_by(self, gtin: str, by: date) -> float: ...
+    def reserve(self, lines: list[dict]) -> tuple[bool, list[str]]: ...
+    def place_order(self, order: dict) -> dict: ...
+    def release(self, order: dict) -> None: ...
 
 
 class FixtureBackend:

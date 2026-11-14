@@ -166,9 +166,10 @@ def test_mandate_signature_required(gw):
 def test_audit_chain_and_tamper(gw):
     gw.plan("BUY-POHJOLA", MILK, "2026-11-16")
     assert gw.audit.verify()["ok"]
-    t = gw.audit.tamper(1)
+    from tests.helpers import tamper
+    t = tamper(gw.audit, 1)
     assert t["ok"]
-    v = gw.audit.verify()
+    v = gw.audit.verify(full=True)  # an old row: only a full check from genesis re-hashes it
     assert not v["ok"] and v["brokenAt"] == 1
 
 

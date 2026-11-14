@@ -22,7 +22,11 @@ try:  # mcp >= 2
 except ImportError:  # mcp 1.x
     from mcp.server.fastmcp import FastMCP
 
-from . import auth, discovery, lookup, manifest, mcp_tools, seller, trust
+import functools
+
+from mcp.types import CallToolResult, TextContent
+
+from . import auth, authz, discovery, lookup, manifest, mcp_tools, seller, trust
 from .analytics.analyst import ASK_FILTERS
 from .analytics.engine import insight_playbook, public as insight_public
 from .crypto import verify_jws
@@ -39,9 +43,39 @@ def _dump(x) -> str:
     return json.dumps(x, ensure_ascii=False, default=str)
 
 
+def _errorize(fn):
+    """A tool result with status >= 400 becomes an MCP protocol-level error (isError: true); the text stays the
+    gateway's JSON error body (error, message, guard, fix, next_allowed_tools)."""
+    @functools.wraps(fn)
+    def w(*a, **k):
+        out = fn(*a, **k)
+        try:
+            d = json.loads(out)
+        except (TypeError, ValueError):
+            return out
+        if isinstance(d, dict) and isinstance(d.get("status"), int) and d["status"] >= 400:  # orders have status "ordered"
+            return CallToolResult(content=[TextContent(type="text", text=out)], is_error=True)
+        return out
+    return w
+
+
+class _Registrar:
+    """Registers tools on the MCP server with _errorize, keeping the plain functions callable."""
+
+    def __init__(self, server):
+        self.server = server
+
+    def tool(self, name: str | None = None, description: str | None = None):
+        def deco(fn):
+            self.server.tool(name=name or fn.__name__, description=description or fn.__doc__)(_errorize(fn))
+            return fn
+        return deco
+
+
 def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Caller], base_url: str = "http://127.0.0.1:8000"):
     """Build the MCP server. Returns (server, {tool name: function}) so callers (and tests) can call tools directly."""
-    mcp = FastMCP("aimo-agent-gateway")
+    server = FastMCP("aimo-agent-gateway")
+    mcp = _Registrar(server)
     limit = RateLimiter.from_env()
     fns: dict[str, Callable] = {}
 
@@ -49,6 +83,9 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
         mcp.tool()(fn)
         fns[fn.__name__] = fn
         return fn
+
+    def forbidden(message: str = "This session belongs to another agent.") -> str:
+        return _dump({"status": 403, "error": "forbidden", "message": message})
 
     def G():
         return get_gw()
@@ -62,11 +99,9 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
             return _dump({"status": 429, "error": "rate_limited", "retryAfter": wait, "fix": {"retryAfterSeconds": wait}})
         try:
             if session_id:
-                s = G().engine.session(session_id)
-                if s["buyerId"] != me.buyer_id or s["agentId"] != me.agent_id:
-                    return _dump({"status": 403, "error": "forbidden", "message": "This session belongs to another agent."})
+                authz.own_session(G(), me, session_id)
             return _dump(G().engine.call(session_id, name, args, actor=me.label if name == "start_session" else None))
-        except PlaybookError as e:
+        except (PlaybookError, auth.AuthError) as e:
             audit_rejection(G(), me.label, me.buyer_id, name, e.status, e.body(),
                             trace_id=session_id if session_id in G().engine.sessions else None)
             return _dump({"status": e.status, **e.body()})
@@ -75,8 +110,8 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
         try:
             if session_id:
                 s = G().insights.sessions.get(session_id)
-                if s and s["buyerId"] != ME().buyer_id:
-                    return _dump({"status": 403, "error": "forbidden", "message": "This analysis belongs to another customer."})
+                if s and not authz.can_read_analysis(ME(), s):
+                    return forbidden("This analysis belongs to another customer.")
             return _dump(G().insights.call(session_id, name, args))
         except PlaybookError as e:
             return _dump({"status": e.status, **e.body()})
@@ -89,12 +124,16 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
         return _dump(public_playbook())
 
     @tool
-    def start_session(buyerId: str | None = None) -> str:
-        """Step 0 · Receive. Start a playbook session for this agent's buyer. Returns sessionId and next_allowed_tools."""
+    def start_session(buyerId: str | None = None, idempotencyKey: str | None = None) -> str:
+        """Step 0 · Receive. Start a playbook session for this agent's buyer. Returns sessionId and next_allowed_tools.
+        idempotencyKey: a retried start returns the same session."""
         me = ME()
         if buyerId and buyerId != me.buyer_id:
-            return _dump({"status": 403, "error": "forbidden", "message": f"This agent acts only for {me.buyer_id}."})
-        return run(None, "start_session", {"buyerId": me.buyer_id, "agentId": me.agent_id, "channel": "mcp"})
+            return forbidden(f"This agent acts only for {me.buyer_id}.")
+        args = {"buyerId": me.buyer_id, "agentId": me.agent_id, "channel": "mcp"}
+        out, replayed = G().engine.idempotent(f"{me.agent_id}|start_session", idempotencyKey, args,
+                                              lambda: run(None, "start_session", args))
+        return out if not replayed else _dump({**json.loads(out), "idempotentReplay": True})
 
     @tool
     def whoami() -> str:
@@ -128,7 +167,7 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
 
     def my_offer(offerId: str):
         of = G().store.get("offer", offerId)
-        return of if of and of.get("buyerId") == ME().buyer_id else None
+        return of if authz.can_read_offer(ME(), of) else None
 
     @tool
     def get_offer(offerId: str) -> str:
@@ -145,15 +184,15 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
     def get_order(orderId: str) -> str:
         """An order with its signed confirmation (order+jwt) and whether the signature verifies."""
         o = G().orders.get(orderId)
-        if not o or G().engine.session(o["sessionId"])["buyerId"] != ME().buyer_id:
-            return _dump({"status": 404, "error": "not_found"})
+        if not authz.can_read_order(G(), ME(), o):
+            return _dump({"status": 404, "error": "not_found", "fix": {"call": "get_audit_log", "why": "find your own orders"}})
         ok, payload, _ = verify_jws(o["confirmation"]["jws"], G().jwks()["keys"])
         return _dump({**o, "confirmationVerified": ok, "confirmationPayload": payload})
 
     @tool
     def get_audit_log(sessionId: str | None = None) -> str:
         """This buyer's hash-chained audit log (optionally one session) and whether the chain verifies."""
-        return _dump({"verify": G().audit.verify(), "events": G().audit.events(trace_id=sessionId, buyer_id=ME().buyer_id, limit=300)})
+        return _dump({"verify": G().audit.verify(), "events": G().audit.events_for(ME(), trace_id=sessionId)})
 
     @tool
     def get_suggestions() -> str:
@@ -184,11 +223,9 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
         after request_approval. Returns {events, next, next_allowed_tools}; call again with after=next."""
         me = ME()
         try:
-            s = G().engine.session(sessionId)
-        except PlaybookError as e:
+            s = authz.own_session(G(), me, sessionId)
+        except (PlaybookError, auth.AuthError) as e:
             return _dump({"status": e.status, **e.body()})
-        if s["buyerId"] != me.buyer_id or s["agentId"] != me.agent_id:
-            return _dump({"status": 403, "error": "forbidden", "message": "This session belongs to another agent."})
         try:
             evs = G().events.wait(sessionId, after, timeoutSeconds)
         except Busy:
@@ -229,6 +266,9 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
             return _dump({"status": 403, "error": "forbidden", "message": f"This agent acts only for {me.buyer_id}."})
         return run_insight(None, "start_analysis", {"buyerId": me.buyer_id, "siteId": siteId, "agent": "mcp"})
 
+    # (an MCP tool list narrowed to next_allowed_tools would need list_changed notifications; this server is stateless
+    #  HTTP, so every result carries next_allowed_tools instead — see docs/ASSUMPTIONS.md)
+
     # one typed tool per order and insight tool, generated from the playbooks' input schemas (1.1.0)
     fns.update(mcp_tools.register(mcp, playbook(), insight_playbook(), run, run_insight,
                                   skip={"start_session", "start_analysis", "get_playbook"}))
@@ -251,7 +291,7 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
         except PlaybookError as e:
             return _dump({"status": e.status, **e.body()})
 
-    return mcp, fns
+    return server, fns
 
 
 def http_app(get_gw: Callable, get_analyst: Callable, base_url: str = "http://127.0.0.1:8000"):

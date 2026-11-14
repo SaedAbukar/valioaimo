@@ -13,7 +13,7 @@ import os
 import re
 
 from ..playbook.engine import PlaybookError
-from .engine import InsightEngine, insight_playbook
+from .engine import insight_playbook
 from .store import SCHEMA
 
 MODEL = "claude-haiku-5-5"
@@ -82,8 +82,6 @@ ASK_FILTERS = {  # page filters for ask / ask_insight: always applied, and they 
 class Analyst:
     def __init__(self, gw):
         self.gw = gw
-        if not hasattr(gw, "insights"):
-            gw.insights = InsightEngine(gw)
         self.E = gw.insights
         self.client = None
         if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
