@@ -179,7 +179,10 @@ class ChatAgent:
         if name == "start_session":
             extra["sessionId"] = d.get("sessionId")
         if name == "place_order":
-            extra.update(orderId=out.get("orderId"), total=out.get("total"), approvedBy=out.get("approvedBy"))
+            extra.update(orderId=out.get("orderId"), total=out.get("total"), approvedBy=out.get("approvedBy"),
+                         lines=[{k: l.get(k) for k in ("name", "qty", "unit", "unitPrice", "lineTotal", "deliveryDate")}
+                                for l in out.get("lines", [])],
+                         deliveries=[{"label": x.get("label"), "window": x.get("window")} for x in out.get("deliveries", [])])
         if name == "wait_for_update":
             summary = ", ".join(e["type"] for e in d.get("events", [])) or "no news yet"
         else:

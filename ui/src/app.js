@@ -265,6 +265,23 @@ function agentSteps(events) {
   return out;
 }
 
+const eur2 = (v) => '€' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const qty = (q, u) => `${Number(q).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${u === 'pcs' ? 'pcs' : u}`;
+function receiptHtml(o, answer) {
+  const lines = o.lines || [];
+  const days = [...new Set((o.deliveries || []).map((d) => `${d.label}${d.window ? ', ' + d.window : ''}`))];
+  return `<article class="card receipt" data-type="delivery">
+    <div class="receipt-h"><span class="ic ok">${ic('check')}</span><div><b>Order placed</b><small>${esc(o.orderId)}</small></div></div>
+    <ul class="receipt-lines">${lines.map((l) => `<li><span class="r-name">${esc(l.name)}<small>${esc(qty(l.qty, l.unit))} × ${esc(eur2(l.unitPrice))}</small></span><b class="num">${esc(eur2(l.lineTotal))}</b></li>`).join('')}</ul>
+    <div class="receipt-total"><span>Total</span><b class="num">${esc(eur2(o.total))}</b></div>
+    <dl class="receipt-meta">
+      ${days.length ? `<div><dt>${ic('truck')} Delivery</dt><dd>${esc(days.join(' · '))}</dd></div>` : ''}
+      <div><dt>${ic('ok')} Approval</dt><dd>${o.approvedBy ? `Approved by ${esc(o.approvedBy)}` : 'Within your spending limit'}</dd></div>
+    </dl>
+    ${answer ? `<p class="receipt-note">${esc(answer)}</p>` : ''}
+  </article>`;
+}
+
 function agentView() {
   const r = S.agentRun;
   const steps = agentSteps(r.events);
@@ -282,7 +299,10 @@ function agentView() {
         ${e.reasons && e.reasons.length ? `<p class="muted" style="margin:0">${esc(e.reasons.join(' '))}</p>` : ''}
         <div class="acts">${done ? `<span class="done-note">${ic('check')} ${esc(done)}</span>` : `<p class="muted" style="margin:0">Demo: you are now ${esc(e.approver)}.</p><button class="btn primary" data-agent-approve="${e.approvalId}">OK, order it</button><button class="btn" data-agent-decline="${e.approvalId}">Not now</button>`}</div></article>`;
     }
-    if (e.type === 'done') return `<article class="card" data-type="delivery"><div class="card-h"><span class="ic">${ic('truck')}</span>From the agent</div><div class="card-t">${esc(e.answer)}</div></article>`;
+    if (e.type === 'done') {
+      const o = r.events.find((x) => x.type === 'tool_result' && x.name === 'place_order' && x.ok);
+      return o ? receiptHtml(o, e.answer) : `<article class="card" data-type="delivery"><div class="card-h"><span class="ic">${ic('chat')}</span>From the agent</div><div class="card-t">${esc(e.answer)}</div></article>`;
+    }
     if (e.type === 'stopped' || e.type === 'error') return `<div class="agent-meta">${esc(e.reason)}</div>`;
     return '';
   };
@@ -542,7 +562,7 @@ document.addEventListener('click', async (e) => {
   }
   for (const m of [window.AimoOrders, window.AimoInsights, window.AimoKitchens]) if (m && await m.click(t, d)) return;
   if (d.go) {
-    if (d.go === 'new') { S.convId = null; S.view = 'chat'; S.panel = null; return render(); }
+    if (d.go === 'new') { S.convId = null; S.agentRun = null; S.view = 'chat'; S.panel = null; return render(); }
     S.view = d.go; S.panel = null; render();
     if (d.go === 'insights') window.AimoInsights.load();
     if (d.go === 'settings') window.AimoKitchens.load();
