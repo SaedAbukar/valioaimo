@@ -21,9 +21,9 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route
 
-from . import aimo_products, catalog
+from . import aimo_products, catalog, trust
 from .adapter import load_dotenv
-from .policy import rules
+from .policy import published_rules
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
@@ -32,7 +32,9 @@ from .core import Gateway  # noqa: E402  (after .env is loaded)
 from .playbook import insights  # noqa: E402
 from .playbook.agent import ChefAssistant  # noqa: E402
 from .playbook.engine import PlaybookError, public_playbook  # noqa: E402
-from . import manifest  # noqa: E402
+from . import manifest, discovery, lookup, auth  # noqa: E402
+from .crypto import verify_jws  # noqa: E402
+from .playbook.tools import decide_approval  # noqa: E402
 from .analytics import engine as insight_engine, views  # noqa: E402
 from .analytics.analyst import Analyst  # noqa: E402
 
@@ -78,39 +80,181 @@ def make_app(live: bool = True) -> Starlette:
     async def playbook_ep(_):
         return JSONResponse(public_playbook())
 
+    # ---------------------------------------------------------------- who is calling
+    def caller(req: Request, *kinds: str) -> auth.Caller:
+        return auth.require(gw(), req.headers.get("authorization"), *kinds)
+
+    def guarded(fn):
+        async def wrap(req: Request):
+            try:
+                return await fn(req)
+            except auth.AuthError as e:
+                return JSONResponse(e.body(), status_code=e.status)
+            except PlaybookError as e:
+                return err(e)
+        return wrap
+
+    def own_session(req: Request) -> tuple[auth.Caller, dict]:
+        c = caller(req, "agent", "ops")
+        s = gw().engine.session(req.path_params["sid"])
+        auth.same_buyer(c, s["buyerId"])
+        if c.kind == "agent" and c.agent_id != s["agentId"]:
+            raise auth.AuthError(403, "forbidden", "This session belongs to another agent.")
+        return c, s
+
+    @guarded
     async def sessions(req: Request):
-        try:
-            return JSONResponse(gw().engine.call(None, "start_session", await body(req)), status_code=201)
-        except PlaybookError as e:
-            return err(e)
-
-    async def session_get(req: Request):
-        try:
-            E = gw().engine
-            return JSONResponse(E.view(E.session(req.path_params["sid"])))
-        except PlaybookError as e:
-            return err(e)
-
-    async def tool(req: Request):
-        try:
-            return JSONResponse(gw().engine.call(req.path_params["sid"], req.path_params["tool"], await body(req)))
-        except PlaybookError as e:
-            return err(e)
-
-    async def audit_ep(req: Request):
-        sid = req.query_params.get("sessionId")
-        return JSONResponse({"verify": gw().audit.verify(), "events": gw().audit.events(trace_id=sid, limit=300)})
-
-    async def approvals(req: Request):
+        c = caller(req, "agent")
         b = await body(req)
-        try:
-            cards = agent().decide(req.path_params["sid"], bool(b.get("ok", True)), b.get("by", "Laura Virtanen"))
-        except PlaybookError as e:
-            return err(e)
-        conv = next((c for c in agent().convs.values() if req.path_params["sid"] in c["sessionIds"]), None)
-        if conv:
-            agent()._say(conv, cards, req.path_params["sid"])
-        return JSONResponse({"cards": cards, "conversation": agent().public(conv) if conv else None})
+        bid = b.get("buyerId") or c.buyer_id
+        auth.same_buyer(c, bid)
+        args = {"buyerId": bid, "agentId": c.agent_id, "channel": "api"}
+        return JSONResponse(gw().engine.call(None, "start_session", args, actor=c.label), status_code=201)
+
+    @guarded
+    async def session_get(req: Request):
+        _, s = own_session(req)
+        return JSONResponse(gw().engine.view(s))
+
+    @guarded
+    async def tool(req: Request):
+        c, s = own_session(req)
+        return JSONResponse(gw().engine.call(s["sessionId"], req.path_params["tool"], await body(req)))
+
+    @guarded
+    async def session_log(req: Request):
+        _, s = own_session(req)
+        return JSONResponse({"sessionId": s["sessionId"], "log": agent().activity(s["sessionId"]),
+                             "audit": [{"at": e["ts"], "who": e["actor"], "what": e["action"], "why": e.get("reason")}
+                                       for e in gw().audit.events(trace_id=s["sessionId"], limit=300)]})
+
+    # ---------------------------------------------------------------- lookup (read-only, no commitment)
+    @guarded
+    async def product_search(req: Request):
+        caller(req, "agent", "ops")
+        b = await body(req)
+        if not str(b.get("query", "")).strip():
+            return JSONResponse({"error": "guard_failed", "message": "query is required", "fix": {"query": "lactose-free milk"}}, status_code=422)
+        return JSONResponse(lookup.search(gw(), b["query"], b.get("qty"), b.get("needBy"), b.get("excludeAllergens"),
+                                          b.get("diet"), b.get("limit", 8)))
+
+    @guarded
+    async def price_availability(req: Request):
+        caller(req, "agent", "ops")
+        b = await body(req)
+        if not b.get("productIds"):
+            return JSONResponse({"error": "guard_failed", "message": "productIds is required", "fix": {"productIds": ["465039"]}}, status_code=422)
+        return JSONResponse(lookup.price_availability(gw(), b["productIds"], b.get("needBy"), b.get("qty")))
+
+    @guarded
+    async def product_get(req: Request):
+        caller(req, "agent", "ops")
+        p = lookup.product(gw(), req.path_params["pid"])
+        return JSONResponse(p) if p else JSONResponse({"error": "not_found"}, status_code=404)
+
+    # ---------------------------------------------------------------- trust: mandate, offers, orders
+    @guarded
+    async def mandate_ep(req: Request):
+        c = caller(req, "agent", "human")
+        signed = gw().mandates[c.buyer_id]
+        _, check = gw().mandate_check(c.buyer_id)
+        return JSONResponse({"mandate": signed["mandate"], "jws": signed["jws"], "valid": check["ok"],
+                             "buyerJwks": gw().buyer_jwks(c.buyer_id)})
+
+    @guarded
+    async def offer_get(req: Request):
+        c = caller(req, "agent", "ops")
+        of = gw().store.get("offer", req.path_params["oid"])
+        if not of:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        auth.same_buyer(c, of.get("buyerId"))
+        return JSONResponse(of)
+
+    @guarded
+    async def offer_verify(req: Request):
+        c = caller(req, "agent", "ops")
+        of = gw().store.get("offer", req.path_params["oid"])
+        if not of:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        auth.same_buyer(c, of.get("buyerId"))
+        return JSONResponse(trust.verify_offer(gw(), of))
+
+    @guarded
+    async def order_get(req: Request):
+        c = caller(req, "agent", "human", "ops")
+        o = gw().orders.get(req.path_params["oid"])
+        if not o:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        s = gw().engine.session(o["sessionId"])
+        auth.same_buyer(c, s["buyerId"])
+        ok, payload, detail = verify_jws(o["confirmation"]["jws"], gw().jwks()["keys"])
+        return JSONResponse({**o, "confirmationVerified": ok, "confirmationPayload": payload})
+
+    # ---------------------------------------------------------------- approvals: named humans only
+    @guarded
+    async def approval_inbox(req: Request):
+        c = caller(req, "human")
+        mine = [m for m in gw().inbox if m["to"] == c.person_id or
+                (m["buyerId"] == c.buyer_id and any(a["id"] == c.person_id for a in gw().buyers[c.buyer_id]["approvers"]))]
+        out = []
+        for m in mine:
+            s = gw().engine.session(m["sessionId"])
+            out.append({**m, "approval": s["data"]["approval"], "lines": [{k: l[k] for k in ("name", "qty", "unit", "lineTotal", "deliveryDate")}
+                                                                          for l in s["data"]["plan"]["lines"]]})
+        return JSONResponse({"for": c.name, "pending": out})
+
+    @guarded
+    async def audit_ep(req: Request):
+        c = caller(req, "agent", "human", "ops")
+        sid = req.query_params.get("sessionId")
+        # a buyer sees its own trail; Valio Aimo operations see every buyer
+        ev = gw().audit.events(trace_id=sid, buyer_id=None if c.kind == "ops" else c.buyer_id, limit=300)
+        return JSONResponse({"verify": gw().audit.verify(), "events": ev})
+
+    @guarded
+    async def ops_pause(req: Request):
+        c = caller(req, "ops")
+        b = await body(req)
+        aid = req.path_params["aid"]
+        paused = bool(b.get("paused", True))
+        gw().kill_switch[aid] = paused
+        gw().audit.append(trace_id=None, actor=c.label, action="agent.paused" if paused else "agent.resumed", buyer_id=None,
+                          refs={"agentId": aid}, reason=b.get("reason") or "operations decision")
+        return JSONResponse({"agentId": aid, "paused": paused})
+
+    # ---------------------------------------------------------------- discovery
+    def base_of(req: Request) -> str:
+        return str(req.base_url).rstrip("/")
+
+    async def ucp(req: Request):
+        return JSONResponse(discovery.ucp_profile(base_of(req)))
+
+    async def agent_card(req: Request):
+        card = discovery.agent_card(base_of(req))
+        card["signatures"] = [{"format": "JWS", "alg": "ES256", "kid": gw().gateway_key.kid,
+                               "jws": gw().gateway_key.sign(card, typ="agent-card+jwt")}]
+        return JSONResponse(card)
+
+    async def openapi_ep(req: Request):
+        return JSONResponse(discovery.openapi(base_of(req)))
+
+    @guarded
+    async def approvals(req: Request):
+        c = caller(req, "human")
+        key = req.path_params["sid"]
+        sid = gw().approvals.get(key, key)
+        s = gw().engine.session(sid)
+        auth.same_buyer(c, s["buyerId"])
+        b = await body(req)
+        ok = bool(b.get("ok", True))
+        conv = next((cv for cv in agent().convs.values() if sid in cv["sessionIds"]), None)
+        if conv:  # a chat order: the chef assistant places it straight after the OK
+            cards = agent().decide(sid, ok, c.person_id)
+            agent()._say(conv, cards, sid)
+            return JSONResponse({"approval": s["data"]["approval"], "cards": cards, "conversation": agent().public(conv)})
+        person = {"id": c.person_id, "name": c.name}
+        appr = decide_approval(gw(), s, ok, person, b.get("note"))
+        return JSONResponse({"approval": appr, "next": "The agent may now call place_order." if ok else "The order stays unplaced."})
 
     async def chat(req: Request):
         b = await body(req)
@@ -153,7 +297,7 @@ def make_app(live: bool = True) -> Starlette:
         return JSONResponse({"ok": True})
 
     async def rules_ep(_):
-        return JSONResponse({"precedence": rules()["precedence"], "rules": rules()["rules"]})
+        return JSONResponse(published_rules(gw()))
 
     async def jwks(_):
         return JSONResponse(gw().jwks())
@@ -232,6 +376,14 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/insights", insights_ep), Route("/v1/settings", settings_ep),
         Route("/v1/catalog/search", search, methods=["POST"]), Route("/v1/rules", rules_ep),
         Route("/v1/demo/reset", reset, methods=["POST"]),
+        Route("/.well-known/ucp", ucp), Route("/.well-known/agent-card.json", agent_card), Route("/openapi.json", openapi_ep),
+        Route("/v1/products/search", product_search, methods=["POST"]),
+        Route("/v1/products/price-availability", price_availability, methods=["POST"]),
+        Route("/v1/products/{pid}", product_get), Route("/v1/mandate", mandate_ep),
+        Route("/v1/sessions/{sid}/log", session_log),
+        Route("/v1/offers/{oid}", offer_get), Route("/v1/offers/{oid}/verify", offer_verify, methods=["POST"]),
+        Route("/v1/orders/{oid}", order_get), Route("/v1/approvals", approval_inbox),
+        Route("/v1/ops/agents/{aid}/pause", ops_pause, methods=["POST"]),
     ])
 
 

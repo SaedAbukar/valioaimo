@@ -215,25 +215,32 @@ def _trim(args: dict) -> dict:
 
 
 def _summary(tool: str, out: dict) -> str:
+    """One plain sentence per call: the human-readable trail for the buyer and for Valio Aimo."""
     if not isinstance(out, dict):
-        return ""
+        return f"{tool} done"
+    if tool == "start_session":
+        return f"session for {out.get('buyerId')} by {out.get('agentId')}, spending limit valid until {out.get('spendingLimitValidUntil')}"
     if tool == "parse_request":
-        return f"brief {'complete' if out.get('complete') else 'missing ' + ','.join(out.get('missing', []))}"
+        what = ", ".join(f"{l['qty']:g} {l['unit']} {l['text']}" for l in out.get("lines", []))
+        return f"understood: {what or 'event'}" + ("" if out.get("complete") else f"; missing {', '.join(out.get('missing', []))}")
     if tool == "recall":
-        return f"{len(out['matched'])} matched, {len(out['gaps'])} gaps"
+        return f"{len(out['matched'])} lines from the kitchen's own memory, {len(out['gaps'])} gaps to search"
     if tool == "request_offers":
-        return f"{len(out['gaps'])} gaps searched"
+        return f"{sum(len(g['candidates']) for g in out['gaps'])} signed offers for {len(out['gaps'])} gaps"
     if tool == "plan_basket":
-        return f"{len(out['lines'])} lines, total {out['total']:.2f}"
+        return f"{len(out['lines'])} lines, total {out['total']:.2f} EUR, on offers {', '.join(o['offerId'] for o in out.get('offers', []))}"
     if tool == "check_basket":
-        return out.get("decision", "")
+        return f"gateway decided {out.get('decision')}" + (f": {'; '.join(out['reasons'])}" if out.get("reasons") else ": within the agent's authority")
     if tool == "render_cards":
-        return ", ".join(c["type"] for c in out["cards"])
-    if tool in ("place_order", "request_approval"):
-        return out.get("status", "")
+        return "shown as: " + ", ".join(c["type"] for c in out["cards"])
+    if tool == "place_order":
+        return f"ordered {out.get('orderId')} for {out.get('total', 0):.2f} EUR" + (f", approved by {out['approvedBy']}" if out.get("approvedBy") else "")
+    if tool == "request_approval":
+        ap = out.get("approval", {}).get("approver", {})
+        return f"asked {ap.get('name')} for an OK"
     if tool == "record_usage":
-        return ", ".join(out.get("labels", []))
-    return ""
+        return "outcome saved: " + ", ".join(out.get("labels", []))
+    return f"{tool} done"
 
 
 def new_session_id() -> str:

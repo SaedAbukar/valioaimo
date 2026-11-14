@@ -1,47 +1,69 @@
-# API contract (summary)
+# API for agents
 
-One handler set, two facades: **REST** described by OpenAPI 3.1 (JSON Schema 2020-12, UCP-shaped capabilities) and **MCP** tools with the same semantics. The reference server (`python -m gateway`) implements the endpoints marked ✅; the MVP page implements all of them client-side (`ui/src/flows.js`).
+The full contract is **`GET /openapi.json`** (OpenAPI 3.1). The same handlers are available as MCP tools (`make mcp`); `GET /v1/tools` lists every tool in order, with its REST path. All `/v1` calls except rules, playbook and tools need `Authorization: Bearer <credential>` ([EXPOSURE.md](EXPOSURE.md)).
 
-## Discovery
-| Endpoint | Purpose | |
-| --- | --- | --- |
-| `GET /.well-known/ucp` | Capability profile (protocols, capabilities, trust parameters) | ✅ |
-| `GET /.well-known/agent-card.json` | A2A-style agent card, signed (JWS ES256) | ✅ |
-| `GET /.well-known/jwks.json` | Gateway public keys for verifying offers, cards, confirmations | ✅ |
-| `GET /openapi.json` | Contract | ✅ (sketch) |
+## Discovery (no credential)
 
-## Auth
-`Authorization: Bearer <agent credential>` bound to exactly one buyer account; every request is evaluated against that buyer's current signed Intent Mandate (R0). Per-agent rate limit → `429 rate_limited` + `Retry-After`. Kill switch → `403 policy_blocked` (V3).
+| Endpoint | What it gives |
+|---|---|
+| `GET /.well-known/ucp` | UCP-style profile: services, capabilities, trust keys, rules, playbook |
+| `GET /.well-known/agent-card.json` | A2A agent card, JWS-signed |
+| `GET /.well-known/jwks.json` | Keys for offers, order confirmations, the card |
+| `GET /openapi.json` | The contract |
+| `GET /v1/rules` | Autonomy matrix: alone / alone and tell / named human / never |
+| `GET /v1/playbook`, `GET /v1/tools` | The enforced steps; every tool in order |
 
-## Buying
-| Method & path | MCP tool | Notes |
-| --- | --- | --- |
-| `POST /v1/catalog/search` ✅ | `search_products` | L0, browse-only; `{query, category, diet, excludeAllergens}` |
-| `GET /v1/products/{gtin}` | `get_product` | GS1 Digital Link in payload |
-| `POST /v1/offers` | `request_offers` | Offer Attestations (VC 2.0, `vc+jwt`), valid 15 min |
-| `POST /v1/offers/verify`, `GET /v1/offers/status` | — | six checks; revocation status list |
-| `POST /v1/plans` ✅ | `plan_fulfilment` | ranked candidates with score breakdown, exclusions with reasons, ≤3 plans, policy preview |
-| `POST /v1/compare` | `compare_products` | 2–4 products with buyer history |
-| `POST /v1/checkout-sessions` | `create_checkout` | `status: ready \| requires_approval \| blocked`, decisions, `approvalId` (URL-mode elicitation) |
-| `POST /v1/checkout-sessions/{id}/complete` | `complete_checkout` | re-verifies; errors `offer_expired`, `price_changed`, `insufficient_stock`, `delivery_unavailable` |
-| `GET /v1/orders/{id}` | `get_order` | signed order confirmation (Cart Mandate) |
-| `GET /v1/approvals?status=pending`, `POST /v1/approvals/{id}/decision` | — | per-line approve / reject / modify, approver id + reason |
-| `GET /v1/decisions/{id}/explain` | `explain_decision` | rule hits with templated reasons |
+## Lookup (agent; read-only, no commitment)
 
-## Governance
-`POST /v1/mandates` (signed by buyer key; versions) · `GET/PUT /v1/preferences` (org / site / category scope; versions) · `POST /v1/preferences/favourites` · `GET /v1/need-groups/{id}/products` · `GET /v1/rules` ✅ · `GET /v1/audit?traceId=` · `GET /v1/audit/verify` ✅ · `POST /v1/ops/agents/{id}/kill-switch`.
+| Endpoint | MCP | Body |
+|---|---|---|
+| `POST /v1/products/search` | `lookup_products` | `{query, qty?, needBy?, excludeAllergens?, diet?, limit?}` |
+| `POST /v1/products/price-availability` | `get_price_availability` | `{productIds[], needBy?, qty?}` |
+| `GET /v1/products/{productId}` | `get_product` | – |
 
-## Events, usage & insights
-`POST /v1/events/intake` · `POST /v1/events/{id}/plan` · `PATCH /v1/events/{id}` · `POST /v1/orders/{id}/reconciliation` · `GET /v1/events/{id}/report` · `GET /v1/leftovers` · `GET /v1/insights/waste` · `GET /v1/processes` (+ `/{id}`, `/export?format=csv|json`) · `GET /v1/insights/summary` · `GET /v1/insights/recommendations` (+ `POST …/{id}/apply`) · `GET /v1/signals` · `DELETE /v1/buyers/{id}/data?scope=` · MCP `plan_event_from_brief`, `record_consumption`, `get_waste_insights`, `get_leftovers`, `get_buying_insights`, `get_preferences`.
+## Ordering: the playbook (agent)
 
-## Error codes
-`offer_expired` · `price_changed` · `insufficient_stock` · `delivery_unavailable` · `policy_blocked` (rule ids) · `approval_required` (approvalId) · `mandate_invalid` · `rate_limited` (Retry-After).
+| Endpoint | Notes |
+|---|---|
+| `POST /v1/sessions` | Start, for the credential's buyer. Returns `sessionId` and `next_allowed_tools`. |
+| `POST /v1/sessions/{id}/tools/{tool}` | One step. Out of order: `409 step_not_allowed`. Bad input: `422 guard_failed` with `fix`. |
+| `GET /v1/sessions/{id}` | Outputs per step |
+| `GET /v1/sessions/{id}/log` | Plain-language log of what was done and why |
 
-## Example: plan with policy preview
-```bash
-curl -s -X POST localhost:8000/v1/plans -H 'content-type: application/json' \
-  -d '{"buyerId":"BUY-POHJOLA","lines":[{"lineId":"L1","text":"lactose-free milk","qty":1000,"unit":"L"}],"needBy":"2026-11-16"}'
-# P1 640 L Kaarna Meijeri + 360 L Maitokaari — €1,304.40 → NOTIFY [R4, R6]
-# P2 1,000 L Tunturi Dairy — €1,410.00 → APPROVE [R5, R8]
-# P3 640 L Mon + 360 L Wed — €1,290.00 → APPROVE [R7]
-```
+The usual path is `parse_request {text}`, then `recall`, then `request_offers` (only for gaps), then `plan_basket` (returns `offers[]`), then `check_basket` (run by the gateway), then `render_cards`. After that the agent calls **`place_order {offerIds}`**, or `request_approval` and, after the human's OK, `place_order {offerIds}`.
+
+`place_order` errors:
+
+| Response | When |
+|---|---|
+| `422 cite_offers` | No `offerIds` were sent |
+| `422 fixed_prices` | A price field was sent |
+| `409 offer_mismatch` | The ids are not the checked basket's (re-quote) |
+| `409 price_locked` | An offer expired or the price changed (re-quote) |
+
+## Trust
+
+| Endpoint | MCP |
+|---|---|
+| `GET /v1/mandate`: the buyer's signed Intent Mandate and the buyer's JWKS | `whoami` |
+| `GET /v1/offers/{id}`: the signed offer (`vc+jwt`) | `get_offer` |
+| `POST /v1/offers/{id}/verify`: six checks | `verify_offer` |
+| `GET /v1/orders/{id}`: the order and its signed confirmation (`order+jwt`), already verified | `get_order` |
+
+## Approvals (named human credential only; agents get 403)
+
+| Endpoint | |
+|---|---|
+| `GET /v1/approvals` | The approver's inbox |
+| `POST /v1/approvals/{approvalId}` | `{ok, note?}`. The decision is recorded and audited, and `approvedBy` goes into the signed confirmation. |
+
+## Audit and operations
+
+| Endpoint | Who |
+|---|---|
+| `GET /v1/audit?sessionId=` | The buyer's own trail (agent or approver); every buyer with the ops credential. Includes chain verification. |
+| `POST /v1/ops/agents/{agentId}/pause` `{paused, reason}` | Valio Aimo operations (kill switch V3) |
+
+## The chef app (first-party UI, not for agents)
+
+`/v1/chat`, `/v1/chat/{id}/actions`, `/v1/board`, `/v1/orders/history`, `/v1/insights/*`, `/v1/kitchens`. The insight playbook (`/v1/insights/sessions/...`) is also usable by agents; see [PLAYBOOK.md](PLAYBOOK.md).

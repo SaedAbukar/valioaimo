@@ -37,6 +37,7 @@ class FixtureBackend:
         self.prices = {p["gtin"]: p["unitPrice"] for p in catalog.products()}
         self.earliest_override: dict[str, date] = {}
         self.orders: list[dict] = []
+        self.live: dict[str, dict] = {}  # curated products priced from the mock API (live mode)
 
     # --- real products bridged in by Discover --------------------------------
     def register(self, gtin: str, price: float, stock: float, earliest: date | None = None):

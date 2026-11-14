@@ -82,7 +82,7 @@ def public(p: dict, lang: str = "en") -> dict:
         "productId": p["id"], "name": p.get(lang) or p.get("en") or p.get("fi"), "nameFi": p.get("fi"),
         "brand": p.get("brand"), "vendor": p.get("vendor"), "salesUnit": p.get("unit"), "category": p.get("cat"),
         "contains": p.get("contains", []), "mayContain": p.get("may", []), "diet": sorted(diet_of(p)),
-        "kgPerSalesUnit": p.get("kg"), "co2eKgPerKg": p.get("co2"), "deliveryReliability": p.get("rel"),
+        "kgPerSalesUnit": p.get("kg"), "co2eKgPerKg": p.get("co2"), "deliveryReliability": p.get("rel"), "labels": p.get("labels", []),
         "substitutes": p.get("subs", []), "gtin": p.get("gtin"),
     }
 

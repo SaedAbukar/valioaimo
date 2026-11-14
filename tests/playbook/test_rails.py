@@ -3,6 +3,7 @@ import pytest
 
 from gateway.core import Gateway
 from gateway.playbook import cards as C
+from gateway.playbook.tools import offer_ids
 from gateway.playbook.engine import GuardFailed, StepNotAllowed, public_playbook
 
 
@@ -87,12 +88,12 @@ def test_price_lock_stops_expired_offers(gw):
     sid = _to_present(gw)
     gw.clock.advance(16)
     with pytest.raises(StepNotAllowed) as e:
-        gw.engine.call(sid, "place_order")
+        gw.engine.call(sid, "place_order", {"offerIds": offer_ids(gw.engine.sessions[sid])})
     assert e.value.extra["guard"] == "price_locked"
     gw.engine.call(sid, "plan_basket")  # re-plan gets fresh signed offers
     gw.engine.call(sid, "check_basket")
     gw.engine.call(sid, "render_cards")
-    assert gw.engine.call(sid, "place_order")["output"]["status"] == "ordered"
+    assert gw.engine.call(sid, "place_order", {"offerIds": offer_ids(gw.engine.sessions[sid])})["output"]["status"] == "ordered"
 
 
 def test_needs_ok_cannot_be_ordered_directly(gw):

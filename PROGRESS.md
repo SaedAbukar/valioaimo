@@ -1,4 +1,20 @@
-# Progress — Aimo Agent Gateway MVP
+# Progress — Aimo Agent Gateway
+
+## v4 — challenge audit (14 Nov 2026)
+- Audited against docs/CHALLENGE_BRIEF.md and the planning-session checklist → **docs/CHALLENGE_CHECKLIST.md** (core 1–4, underlying 5–8, optional 9–11 all PASS; scenarios: 3 PASS, 2 PARTIAL, proactive seller agent not built).
+- New: OpenAPI 3.1 (`/openapi.json`), `/.well-known/ucp`, signed `/.well-known/agent-card.json`, structured lookup (`/v1/products/search`, `/price-availability`) through the mock API, bearer credentials bound to one buyer (`gateway/auth.py`), approver inbox + human-only approvals, orders that must cite offer ids, no-negotiation guard, signed order confirmations, `/v1/mandate`, `/v1/offers/{id}[/verify]`, `/v1/orders/{id}`, plain session log, ops kill switch, pack labels in lookup, live pricing for recalled favourites.
+- MCP: 40 tools, identity from `AIMO_AGENT_TOKEN`, no approve tool.
+- `scripts/agent_demo.py` (stdlib-only external agent): brief request → AUTO order in < 1 s on the live mock API; 3,000 L → needs OK → Laura approves → order.
+- Tests: 134 passed + 1 opt-in live test (passed). Docs: README (gateway first + 3-minute demo), API, STANDARDS, EXPOSURE, ASSUMPTIONS.
+- Git: pushed to github.com/SaedAbukar/valioaimo (organiser dataset index excluded).
+
+### Remaining gaps
+- Proactive Valio Aimo seller agent (example scenario) not built.
+- "Suggest recipes around a seasonal ingredient" and a "tomorrow" last-minute golden scenario not built.
+- Chef-app endpoints run without sign-in in the demo (documented in docs/EXPOSURE.md).
+- Claude Haiku analyst path not exercised live (no Anthropic key on this machine).
+
+## Earlier
 
 ## Published
 - Artifact: https://claude.ai/artifact/4PYHao2tm2PPmvCVTekwTp — slug `1b710f3e-6284-4874-8781-8bbf027c6d73`, version `1794608519-366b` (MVP v1).

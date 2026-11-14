@@ -33,3 +33,16 @@
 - **Product choice** appears only for needs with no memory (new kitchen or new item) and at least two on-time options; for orders ≥ 150 packs, tiny packs are skipped.
 - **Delivery window** is shown as "in the morning"; the mock API's `closingTime` is not shown yet.
 - **Offline page** plays recorded gateway runs (`scripts/record_replays.py`); typed text it has no recording for gets the example requests as tap answers.
+
+## v4 (14 Nov 2026): challenge audit, gateway first
+
+- **The gateway is the product.** README, demo and checklist lead with an external agent; the chef app is one client.
+- **Credentials.** Bearer tokens bound to one buyer and one agent (the agent's existing `apiKey` in buyers.json), `demo-human-<personId>` for approvers, `demo-ops` for Valio Aimo operations. Synthetic and public on purpose; production → OAuth 2.1 / buyer SSO (docs/EXPOSURE.md).
+- **Agents can never approve.** `POST /v1/approvals/{id}` needs the named approver's credential (403 for agents and for approvers of other buyers); MCP has no approve tool. For API sessions the agent places the order after the OK; for chat sessions the assistant places it straight away.
+- **Orders cite offers.** `place_order` needs `offerIds` equal to the checked basket's signed offers; price fields are rejected (`fixed_prices`); stale ids → 409 `offer_mismatch`; expired/changed price → 409 `price_locked`. Both lead to `plan_basket`, which re-quotes.
+- **Lookup is outside the playbook.** It is read-only and commits nothing, so any agent may call it at any time; ordering still has to follow the playbook. Lookup returns availability as a status + "can you cover my quantity" (capped at the asked quantity), never the stock level.
+- **Live pricing for recalled favourites.** Curated demo products with a real counterpart carry `aimoId` (the three lactose-free milks). In live mode `plan_basket` refreshes their price per L and availability from the mock API (one batch call each), so the brief's request is priced on live data while the golden scenarios stay repeatable offline. Each offer says `priceSource`.
+- **The mock API has no order endpoint.** Orders are confirmed by the gateway's order book (`FixtureBackend.place_order`, reference `AIMO-SO-…`) and signed by the gateway; in production this is the ERP/webshop order API behind the adapter.
+- **Labels.** Pack labels come from GS1 `packagingMarkedLabel` (temperature marks dropped) and are shown as certificates; their validity is not in the data, so they are treated as valid.
+- **Organiser data stays out of git.** `gateway/data/aimo_products.json` is git-ignored (Junction-only data in a public repo); `make index` rebuilds it from `data_raw/`.
+- **Keys are per process.** The JWKS changes on restart or demo reset; agents fetch it per run.

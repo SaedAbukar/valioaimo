@@ -52,6 +52,8 @@ def issue_offer(gw, gtin: str, need_by=None, buyer_id: str | None = None) -> dic
         "validFrom": iso(now),
         "validUntil": iso(now + timedelta(minutes=PRICE_TTL_MIN)),
         "digitalLink": catalog.digital_link(p),
+        "priceSource": "valio-aimo-mock-api" if (gtin in be.live or p.get("livePrice")) else "demo-values",
+        "aimoProductId": (be.live.get(gtin) or {}).get("aimoProductId") or p.get("aimoProductId"),
         "trustLevel": "L2" if certs and all(c["valid"] for c in certs) else "L1",
     }
     vc = {

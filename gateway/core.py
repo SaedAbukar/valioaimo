@@ -38,6 +38,7 @@ class Gateway:
         self.kill_switch: dict[str, bool] = {}
         self.orders: dict[str, dict] = {}
         self.approvals: dict[str, str] = {}
+        self.inbox: list[dict] = []  # approval requests waiting for a named human
         from .playbook.engine import Engine
         self.engine = Engine(self)
 

@@ -179,3 +179,24 @@ def summary(outcome: str, decisions: list[dict]) -> str:
     return {"NOTIFY": f"Allowed; buyer is notified ({ids}).",
             "APPROVE": f"Needs human approval ({ids}).",
             "BLOCK": f"Blocked ({ids}); the agent cannot proceed."}[outcome]
+
+
+def published_rules(gw) -> dict:
+    """The guardrails as published to agents: what the agent decides alone vs. what needs a human.
+    Evaluated by the gateway (this module), never by the agent; the strictest fired rule wins."""
+    rs = rules()["rules"]
+    by = lambda o: [{"id": r["id"], "title": r["title"], "side": r["side"]} for r in rs if r["outcome"] == o]  # noqa: E731
+    return {
+        "version": rules()["version"], "decidedBy": "the gateway (gateway/policy.py + rules.yaml), never the agent or its LLM",
+        "precedence": rules()["precedence"],
+        "autonomy": {
+            "agentDecidesAlone": "Orders where no rule below fires: placed at once within the signed mandate (AUTO).",
+            "agentDecidesAndTells": by("NOTIFY"),
+            "needsNamedHumanOk": by("APPROVE"),
+            "neverAllowed": by("BLOCK"),
+        },
+        "limitsPerBuyer": {bid: {"limits": b["mandate"]["limits"], "approvers": [a["name"] + ", " + a["role"] for a in b["approvers"]],
+                                 "neverOrder": b["mandate"].get("hardExclusions", {}).get("allergens", [])}
+                           for bid, b in gw.buyers.items()},
+        "rules": rs,
+    }

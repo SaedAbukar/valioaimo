@@ -29,6 +29,13 @@ ALLERGEN = {
     "SA": "nuts", "SC": "nuts", "SH": "nuts", "SM": "nuts", "SP": "nuts", "SR": "nuts", "ST": "nuts", "SW": "nuts",
     "SQ": "nuts",
 }
+# certificate / sustainability labels printed on the pack (GS1 packagingMarkedLabel), as shown in the webshop
+LABELS = {"GOODS_FROM_FINLAND_BLUE_SWAN": "Hyvää Suomesta (Joutsenlippu)", "MADE_IN_FINLAND_FLAG_WITH_KEY": "Avainlippu",
+          "FINNISH_HEART_SYMBOL": "Sydänmerkki", "EU_ORGANIC_FARMING": "EU organic", "SVANEN": "Nordic Swan Ecolabel",
+          "RAINFOREST_ALLIANCE": "Rainforest Alliance", "EU_ECO_LABEL": "EU Ecolabel", "MARINE_STEWARDSHIP_COUNCIL_LABEL": "MSC",
+          "FAIR_TRADE_MARK": "Fairtrade", "AQUACULTURE_STEWARDSHIP_COUNCIL": "ASC", "KRAV_MARK": "KRAV",
+          "OFFICIAL_ECO_LABEL_SUN": "Luomu (aurinkomerkki)", "SOIL_ASSOCIATION_ORGANIC_SYMBOL": "Soil Association organic",
+          "PUHTAASTI_KOTIMAINEN": "Puhtaasti kotimainen", "DOLPHIN_SAFE": "Dolphin safe", "UTZ_CERTIFIED": "UTZ"}
 CLAIMS = {"FREE_FROM_LACTOSE": "lactose_free", "FREE_FROM_GLUTEN": "gluten_free", "VEGAN": "vegan",
           "VEGETARIAN": "vegetarian", "FREE_FROM_MILK": "milk_free"}
 
@@ -72,6 +79,8 @@ def slim(p: dict, co2: dict, rel: dict) -> dict:
                     diet.add(CLAIMS[v["id"]])
                 if v.get("unit") == "DIET" and v.get("synkkaId") in CLAIMS:
                     diet.add(CLAIMS[v["synkkaId"]])
+    labels = sorted({LABELS[v["id"]] for g in s.get("classifications", []) if g["name"] == "packagingMarkedLabel"
+                     for v in g["values"] if v.get("id") in LABELS})
     may -= contains
     base = next((u for u in s.get("unitConversions", []) if u.get("synkkaPackagingType") == "BASE_UNIT_OR_EACH"), None)
     base_kg = _kg((base or {}).get("netWeight"))
@@ -89,7 +98,7 @@ def slim(p: dict, co2: dict, rel: dict) -> dict:
         "kg": round(base_kg * per_sales, 4) if base_kg else None,
         "l": round(base_l * per_sales, 4) if base_l and p["baseUnit"] in ("BOT", "ST", "CS", "PAK", "KI", "PRK") else None,
         "origin": p.get("countryOfOrigin"), "vat": s.get("vatCode"), "varW": bool(s.get("variableUnit")),
-        "co2": co2.get(p["id"]), "rel": rel.get(p["id"]),
+        "co2": co2.get(p["id"]), "rel": rel.get(p["id"]), "labels": labels,
         "subs": [x["substituteProduct"] for x in p.get("substitutions", []) if x.get("product") == p["id"]],
     }
     return {k: v for k, v in rec.items() if v not in (None, "", [], False)}

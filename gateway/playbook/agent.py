@@ -44,6 +44,11 @@ class ChefAssistant:
     def _session(self, c: dict) -> dict | None:
         return self.E.sessions.get(c["sessionIds"][-1]) if c["sessionIds"] else None
 
+    def _order(self, s):
+        """Place the order, citing the signed offers the checked basket stands on."""
+        from .tools import offer_ids
+        return self._call(s, "place_order", {"offerIds": offer_ids(s)})
+
     def _call(self, s, tool, args=None):
         return self.E.call(s["sessionId"] if s else None, tool, args or {})["output"]
 
@@ -128,7 +133,7 @@ class ChefAssistant:
             self._call(s, "plan_basket", {"useAlternative": payload["lineId"]})
             cards = self._present(s, replan)
         elif action == "order":
-            order = self._call(s, "place_order")
+            order = self._order(s)
             cards = [C.delivery(order)]
         elif action == "send_for_ok":
             out = self._call(s, "request_approval")
@@ -147,16 +152,17 @@ class ChefAssistant:
         return {"conversation": self.public(c), "cards": self._say(c, cards, s["sessionId"] if s else None)}
 
     def decide(self, sid: str, ok: bool, by: str) -> list[dict]:
-        """Human approver decision (not an agent tool). On OK the agent places the order."""
+        """Human approver decision (the chef app acting for the named approver). On OK the agent places the order."""
+        from .tools import decide_approval
         s = self.E.session(sid)
         appr = s["data"]["approval"]
-        appr.update({"status": "approved" if ok else "rejected", "decidedBy": by, "decidedAt": iso(self.gw.clock.now())})
-        self.gw.audit.append(trace_id=sid, actor=f"human:{by}", action="approved" if ok else "rejected", buyer_id=s["buyerId"],
-                             refs={"approvalId": appr["approvalId"], "step": "act"}, decision="APPROVE" if ok else "REJECT",
-                             reason=f"{by} {'approved' if ok else 'declined'} the order")
+        people = self.gw.buyers[s["buyerId"]]["approvers"]
+        person = next((p for p in people if by in (p["name"], p["id"])), None) or \
+            next(p for p in people if p["id"] == appr["approver"]["id"])
+        decide_approval(self.gw, s, ok, person)
         if not ok:
-            return [C.card("needs_ok", title="Not approved", text=f"{by.split()[0]} said not now. It stays in Planning.", actions=[])]
-        order = self._call(s, "place_order")
+            return [C.card("needs_ok", title="Not approved", text=f"{person['name'].split()[0]} said not now. It stays in Planning.", actions=[])]
+        order = self._order(s)
         return [C.delivery(order)]
 
     # ----------------------------------------------------------- views

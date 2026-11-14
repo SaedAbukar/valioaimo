@@ -52,7 +52,8 @@ def bridge(gw, rec: dict, kind: str | None, need_by: date, live_data: dict | Non
         "name": rec.get("en") or rec.get("fi"), "nameFi": rec.get("fi"), "brand": rec.get("brand") or rec.get("vendor", "").title(),
         "category": KIND_CATEGORY.get(kind, "dry_goods"), "kind": kind, "variant": [], "keywords": [],
         "unit": unit, "packSize": size, "unitsPerCase": 1, "caseQty": size, "currency": "EUR", "priceBasis": f"per {unit}",
-        "allergens": pub["contains"], "mayContain": pub["mayContain"], "diet": pub["diet"], "certificates": [],
+        "allergens": pub["contains"], "mayContain": pub["mayContain"], "diet": pub["diet"],
+        "certificates": [{"label": x, "issuer": "on pack (GS1 packagingMarkedLabel)", "validUntil": "2099-12-31"} for x in pub["labels"]],
         "origin": {"country": (rec.get("origin") or "").upper(), "supplierId": rec.get("vendor", "")},
         "qualityGrade": 4.0, "carbonClass": None, "shelfLifeDays": 7 if rec.get("temp") in (1, 2, 3, 4) else 180,
         "kgPerUnit": (rec.get("kg") / size) if rec.get("kg") and size else 1.0, "co2eKgPerKg": rec.get("co2"),
@@ -121,3 +122,41 @@ def search_live(gw, text: str, kind: str | None, need_by: date, exclude: list[st
             out.append(p)
     return {"products": out, "excluded": r["excluded"], "notDeliverable": dropped, "source": "valio-aimo",
             "live": bool(prices)}
+
+
+def query_fi(need: str) -> str:
+    """The real assortment is named in Finnish first; map the few words the index does not know."""
+    return need.replace("lactose-free", "laktoositon").replace("lactose free", "laktoositon")
+
+
+def refresh_curated(gw, need_by: date) -> list[str]:
+    """Live mode: curated demo products that mirror a real Valio Aimo product (`aimoId`)
+    get their price and availability from the mock API (one batch call each), so a
+    recalled favourite is priced and promised on live data, not demo values."""
+    client = getattr(gw, "aimo", None)
+    if not client:
+        return []
+    mapped = {p["gtin"]: p["aimoId"] for p in catalog.products() if p.get("aimoId")}
+    ids = sorted(set(mapped.values()))
+    prices, avail = client.prices(ids, d2s(need_by)), client.availability(ids, d2s(need_by))
+    done = []
+    for gtin, aid in mapped.items():
+        pr, av = prices.get(aid), avail.get(aid)
+        if not pr or pr.get("error") or not pr.get("catalogPrice"):
+            continue
+        sales = pr["catalogPrice"]["value"]
+        cmp = (pr.get("comparisonPrice") or {}).get("value")
+        per_unit = cmp if cmp else sales / (catalog.by_gtin(gtin)["packSize"] or 1)
+        content = sales / cmp if cmp else catalog.by_gtin(gtin)["packSize"]
+        lines = (av or {}).get("scheduleLines") or []
+        line = lines[0] if lines else {}
+        amount = line.get("availableAmount", 0) or 0
+        if (av or {}).get("salesBlock") or not line.get("availableDate") or amount <= 0:
+            stock, earliest = 0.0, None
+        else:
+            stock, earliest = min(amount, 100000) * content, s2d(line["availableDate"])
+        gw.backend.register(gtin, round(per_unit, 4), round(stock, 1), earliest)
+        gw.backend.inbound[gtin] = []
+        gw.backend.live[gtin] = {"aimoProductId": aid, "priceValidTo": pr["catalogPrice"].get("validTo")}
+        done.append(gtin)
+    return done

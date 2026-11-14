@@ -74,7 +74,8 @@
      "inDays": 5,
      "qty": 800
     }
-   ]
+   ],
+   "aimoId": "465039"
   },
   {
    "key": "milk_lf_semi_maitokaari",
@@ -129,7 +130,8 @@
    "leadTimeDays": 1,
    "onTimeRate": 0.95,
    "stock": 800,
-   "inbound": []
+   "inbound": [],
+   "aimoId": "464201"
   },
   {
    "key": "milk_lf_whole_tunturi",
@@ -178,7 +180,8 @@
    "leadTimeDays": 1,
    "onTimeRate": 0.96,
    "stock": 1200,
-   "inbound": []
+   "inbound": [],
+   "aimoId": "464073"
   },
   {
    "key": "milk_semi_laaksola",

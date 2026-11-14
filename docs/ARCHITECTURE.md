@@ -210,3 +210,25 @@ flowchart LR
 | ADR-12 | Answers as linted cards | Plain language is enforced, not hoped for |
 | ADR-13 | Learn silently only from right-sized runs; ask (Tip) after repeated over-ordering | Chefs stay in control of changes they did not ask for |
 | ADR-14 | Recorded gateway runs for the offline page | The artifact shows real gateway output without a server |
+
+## 10. v4: the agent-facing surface (challenge audit)
+
+```mermaid
+flowchart LR
+  ext[External agent<br/>script · Claude · any MCP client] -->|Bearer agent token| api
+  human([Named approver]) -->|Bearer human token| api
+  ops([Valio Aimo operations]) -->|Bearer ops token| api
+  subgraph Gateway
+    api[REST /v1 + MCP<br/>auth.py binds caller to one buyer] --> look[lookup.py<br/>search · price-availability]
+    api --> eng[Playbook engine<br/>409 out of order]
+    eng --> pol[policy.py + rules.yaml<br/>gateway decides]
+    eng --> trust[trust.py<br/>signed offers · confirmations]
+    eng --> audit[(Hash-chained audit)]
+    disc[/.well-known: ucp · agent card · jwks<br/>/openapi.json/]
+  end
+  look --> ad[adapter.py<br/>only module that talks to Valio Aimo]
+  eng --> ad
+  ad -->|X-API-Key, never exposed| mock[(Valio Aimo mock API<br/>/api/price · /api/availability)]
+```
+
+Commitment path: `plan_basket` issues signed offers (15 min) → `check_basket` (gateway) → `place_order {offerIds}` or `request_approval` → named human's inbox → `POST /v1/approvals/{id}` (human only) → `place_order {offerIds}` → signed `order+jwt` confirmation. Checklist: [CHALLENGE_CHECKLIST.md](CHALLENGE_CHECKLIST.md); exposure: [EXPOSURE.md](EXPOSURE.md).

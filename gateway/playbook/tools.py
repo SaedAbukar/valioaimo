@@ -244,7 +244,7 @@ def request_offers(gw, s: dict, args: dict) -> dict:
 
 
 def _query(need: str) -> str:
-    return need.replace("lactose-free", "laktoositon").replace("lactose free", "laktoositon")
+    return discover.query_fi(need)
 
 
 def _exclusions(gw, s) -> list[str]:
@@ -274,6 +274,8 @@ def plan_basket(gw, s: dict, args: dict) -> dict:
         d["ignoredTips"].append(args["ignoreTip"])
     if "recall" not in d:
         raise StepNotAllowed("Recall must run before planning.", next_allowed_tools=["recall"])
+    if getattr(gw, "aimo", None):  # live mode: recalled favourites are priced on the mock API too
+        discover.refresh_curated(gw, _need_by(gw, s))
     b = d["brief"]
     is_event = bool(b.get("event"))
     if is_event and (args.get("acceptTip") or args.get("ignoreTip")):
@@ -362,6 +364,9 @@ def plan_basket(gw, s: dict, args: dict) -> dict:
                             for pl, r in zip(plan_lines, reqs) if pl["qtyAfterLeftovers"] > 0 and pl["plans"]],
            "warnings": (d.get("menu") or {}).get("warnings", []),
            "co2eKg": round(sum(l["qty"] * (catalog.by_gtin(l["gtin"]).get("kgPerUnit") or 1) * (catalog.by_gtin(l["gtin"]).get("co2eKgPerKg") or 0) for l in lines), 1)}
+    # the signed offers this basket stands on: place_order must cite exactly these ids
+    out["offers"] = [{k: d["offers"][g][k] for k in ("offerId", "gtin", "name", "unitPrice", "unit", "validUntil", "priceSource", "aimoProductId")}
+                     for g in dict.fromkeys(l["gtin"] for l in lines)]
     d["plan"] = out
     return out
 
@@ -490,8 +495,48 @@ def _lock_prices(gw, s):
                                  guard="price_locked", next_allowed_tools=["plan_basket"])
 
 
+NEGOTIATION_KEYS = {"price", "unitPrice", "prices", "discount", "total", "counterOffer", "lineTotal"}
+
+
+def offer_ids(s: dict) -> list[str]:
+    """The signed offers the checked basket stands on; place_order must cite exactly these."""
+    d = s["data"]
+    return list(dict.fromkeys(d["offers"][l["gtin"]]["offerId"] for l in d["plan"]["lines"]))
+
+
+def _cite(s: dict, args: dict):
+    """Inquiry -> commitment at fixed prices: an order cites the signed offers; no price is negotiable."""
+    tried = sorted(NEGOTIATION_KEYS & set(args))
+    if tried:
+        raise GuardFailed("Prices are fixed by the signed offers. There is no negotiation: "
+                          f"remove {', '.join(tried)} and cite the offer ids.", guard="fixed_prices",
+                          fix={"offerIds": offer_ids(s)})
+    cited = args.get("offerIds")
+    want = offer_ids(s)
+    if not cited:
+        raise GuardFailed("An order must cite the signed offers it accepts.", guard="cite_offers", fix={"offerIds": want})
+    if set(cited) != set(want):
+        raise StepNotAllowed("The cited offers are not the ones in the checked basket. Re-quote with plan_basket.",
+                             guard="offer_mismatch", expected=want, next_allowed_tools=["plan_basket"])
+
+
+def _confirmation(gw, s: dict, order: dict) -> dict:
+    """Order confirmation signed by the gateway (JWS ES256), verifiable against /.well-known/jwks.json."""
+    mandate, _ = gw.mandate_check(s["buyerId"])
+    claim = {"type": "OrderConfirmation", "orderId": order["orderId"], "backendOrderRef": order["backendOrderRef"],
+             "buyerId": s["buyerId"], "agentId": s["agentId"], "mandateId": (mandate or {}).get("mandateId"),
+             "sessionId": s["sessionId"], "offerIds": [l["offerId"] for l in order["lines"]],
+             "lines": [{k: l[k] for k in ("offerId", "gtin", "qty", "unit", "unitPrice", "lineTotal", "deliveryDate")}
+                       for l in order["lines"]],
+             "total": order["total"], "currency": "EUR", "placedAt": order["placedAt"],
+             "decision": order["decision"], "approvedBy": order["approvedBy"]}
+    return {"format": "order+jwt", "alg": "ES256", "kid": gw.gateway_key.kid, "jwksUri": "/.well-known/jwks.json",
+            "jws": gw.gateway_key.sign(claim, typ="order+jwt")}
+
+
 def place_order(gw, s: dict, args: dict) -> dict:
     d = s["data"]
+    _cite(s, args)
     _lock_prices(gw, s)
     plan = d["plan"]
     prev = d.get("order")
@@ -501,7 +546,10 @@ def place_order(gw, s: dict, args: dict) -> dict:
              "decision": d["decision"]["decision"], "approvedBy": (d.get("approval") or {}).get("decidedBy")}
     if d.get("approval") and d["approval"]["status"] == "approved":
         d["approval"]["used"] = True
+    for ln in order["lines"]:  # the price comes from the signed offer, never from the caller
+        ln["offerId"] = d["offers"][ln["gtin"]]["offerId"]
     order["backendOrderRef"] = gw.backend.place_order(order)["backendOrderRef"]
+    order["confirmation"] = _confirmation(gw, s, order)
     d["order"] = order
     gw.orders[order["orderId"]] = {"sessionId": s["sessionId"], **order}
     return order
@@ -523,7 +571,30 @@ def request_approval(gw, s: dict, args: dict) -> dict:
     d["approval"] = {"approvalId": new_id("APR"), "status": "pending", "approver": ap, "requestedAt": iso(gw.clock.now()),
                      "reasons": d["decision"]["reasons"], "total": d["plan"]["total"]}
     gw.approvals[d["approval"]["approvalId"]] = s["sessionId"]
+    # the request reaches a named human: their inbox (GET /v1/approvals with their credential)
+    gw.inbox.append({"to": ap["id"], "name": ap["name"], "buyerId": s["buyerId"], "approvalId": d["approval"]["approvalId"],
+                     "sessionId": s["sessionId"], "at": d["approval"]["requestedAt"]})
+    gw.audit.append(trace_id=s["sessionId"], actor="system:gateway", action="approval.notified", buyer_id=s["buyerId"],
+                    refs={"approvalId": d["approval"]["approvalId"], "to": ap["id"]},
+                    reason=f"Asked {ap['name']} ({ap['role']}) for an OK: {'; '.join(d['decision']['reasons'])}")
     return {"status": "waiting_for_ok", "approval": d["approval"]}
+
+
+def decide_approval(gw, s: dict, ok: bool, person: dict, note: str | None = None) -> dict:
+    """A named approver's decision. Not a playbook tool: agents cannot call it (auth + MCP have no such tool)."""
+    appr = (s["data"].get("approval") or {})
+    if appr.get("status") != "pending":
+        raise GuardFailed("There is no pending approval for this order.", guard="pending_approval")
+    if person["id"] not in {a["id"] for a in gw.buyers[s["buyerId"]]["approvers"]}:
+        raise GuardFailed(f"{person.get('name', person['id'])} is not an approver for this customer.", guard="named_approver")
+    appr.update({"status": "approved" if ok else "rejected", "decidedBy": person["name"], "decidedById": person["id"],
+                 "decidedAt": iso(gw.clock.now()), "note": note})
+    gw.inbox[:] = [m for m in gw.inbox if m["approvalId"] != appr["approvalId"]]
+    gw.audit.append(trace_id=s["sessionId"], actor=f"human:{person['name']}", action="approved" if ok else "rejected",
+                    buyer_id=s["buyerId"], refs={"approvalId": appr["approvalId"], "step": "act", "personId": person["id"]},
+                    decision="APPROVE" if ok else "REJECT",
+                    reason=f"{person['name']} {'approved' if ok else 'declined'} the order" + (f": {note}" if note else ""))
+    return appr
 
 
 # =================================================================== 8 Follow up and learn
