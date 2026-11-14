@@ -14,7 +14,11 @@ import threading
 import time
 from typing import Callable
 
+import logging
+
 from .playbook.engine import _summary
+
+LOG = logging.getLogger("aimo.gateway")
 from .util import new_id
 
 DEFAULT_MODEL = "claude-haiku-5-5"
@@ -147,6 +151,8 @@ class ChatAgent:
             for u in uses:
                 args = dict(u.input or {})
                 run.emit("tool_call", name=u.name, args={k: v for k, v in args.items() if k != "sessionId"})
+                LOG.info(json.dumps({"msg": "agent.tool_call", "runId": run.id, "buyerId": run.buyer_id, "tool": u.name,
+                                     "args": {k: v for k, v in args.items() if k != "text"}}, default=str))
                 res = self._mcp(token, "tools/call", {"name": u.name, "arguments": args})
                 text = "".join(c.get("text", "") for c in res.get("content", []))
                 self._report(run, u.name, text, bool(res.get("isError")))

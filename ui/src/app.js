@@ -239,17 +239,41 @@ function composer() {
     ${S.mode === 'live' ? `<button type="button" class="agent-toggle" data-agent-toggle aria-pressed="${!!S.agentMode}" ${S.agentAvail && S.agentAvail.available ? '' : 'disabled'} title="${esc(S.agentAvail && !S.agentAvail.available ? S.agentAvail.reason : 'A Claude agent orders through the gateway over MCP')}">${ic('spark')} Agent</button>` : ''}
     <button type="button" class="ibtn ${S.recording ? 'rec' : ''}" id="mic" aria-label="${S.recording ? 'Stop listening' : 'Speak'}">${ic('mic')}</button>
     <button type="submit" class="ibtn send" id="send" aria-label="Send" disabled>${ic('send')}</button>
-  </form><div class="hint">${S.agentMode ? `Agent mode: ${esc(S.agentAvail.model)} orders through the gateway over MCP. Every call is shown as it happens.`
+  </form><div class="hint">${S.agentMode ? `Agent mode: a Claude agent orders for you through the Valio Aimo gateway.`
     : S.agentAvail && !S.agentAvail.available && S.mode === 'live' ? esc(S.agentAvail.reason) : 'Answers come as cards. Tap “Why?” on any card for the details.'}</div></div>`;
 }
 
 // ------------------------------------------------------------------ chat
+// what the agent is doing, in plain words (the raw MCP calls go to the server log only)
+const AGENT_SAYS = {
+  start_session: 'Opening an order for your kitchen', parse_request: 'Reading your request',
+  recall: 'Checking your favourites and past orders', request_offers: 'Looking in the Valio Aimo range',
+  search_products: 'Looking in the Valio Aimo range', get_product: 'Looking in the Valio Aimo range',
+  lookup_products: 'Looking in the Valio Aimo range', get_price_availability: 'Checking prices and stock',
+  plan_basket: 'Putting the basket together', check_basket: 'Checking your rules and spending limit',
+  render_cards: 'Preparing the summary', request_approval: 'Asking for an OK', wait_for_update: 'Waiting for the OK',
+  place_order: 'Placing the order', get_suggestions: 'Checking offers from Valio Aimo',
+  get_rules: 'Checking what I may do on my own', whoami: 'Checking what I may do on my own', get_playbook: 'Checking the steps to follow',
+};
+function agentSteps(events) {
+  const out = [];
+  for (const e of events) {
+    if (e.type !== 'tool_call') continue;
+    const say = AGENT_SAYS[e.name] || 'Working on it';
+    if (!out.length || out[out.length - 1] !== say) out.push(say);
+  }
+  return out;
+}
+
 function agentView() {
   const r = S.agentRun;
+  const steps = agentSteps(r.events);
+  const running = r.status === 'running';
+  const stepsHtml = steps.length ? `<ol class="agent-steps">${steps.map((s, i) => {
+    const now = running && i === steps.length - 1;
+    return `<li class="${now ? 'now' : 'done'}">${now ? '<i></i>' : ic('check')}<span>${esc(s)}${now ? '…' : ''}</span></li>`;
+  }).join('')}</ol>` : '';
   const row = (e) => {
-    if (e.type === 'start') return `<div class="agent-meta">${ic('spark')} ${esc(e.model)} connected ${esc(e.via)} · ${e.tools} tools</div>`;
-    if (e.type === 'tool_call') return `<div class="agent-step"><code>→ ${esc(e.name)}</code>${Object.keys(e.args || {}).length ? `<small>${esc(JSON.stringify(e.args).slice(0, 140))}</small>` : ''}</div>`;
-    if (e.type === 'tool_result') return `<div class="agent-step ${e.ok ? 'ok' : 'refused'}"><code>${e.ok ? '←' : '✕'} ${esc(e.name)}</code><small>${e.ok ? '' : esc((e.status ? e.status + ' · ' : '') + (e.guard ? e.guard + ' · ' : ''))}${esc(e.summary || '')}${!e.ok && e.fix ? ' · fix: ' + esc(JSON.stringify(e.fix).slice(0, 160)) : ''}</small></div>`;
     if (e.type === 'text') return `<div class="agent-text">${esc(e.text)}</div>`;
     if (e.type === 'waiting_for_ok') {
       const done = S.uiDone['appr:' + e.approvalId];
@@ -262,8 +286,7 @@ function agentView() {
     if (e.type === 'stopped' || e.type === 'error') return `<div class="agent-meta">${esc(e.reason)}</div>`;
     return '';
   };
-  return `<div class="wrap"><div class="thread"><div class="msg-user">${esc(r.text)}</div><div class="turn agent-run">${r.events.map(row).join('')}</div>
-    ${r.status === 'running' ? `<div class="typing" role="status"><i></i>The agent is working</div>` : ''}</div></div>`;
+  return `<div class="wrap"><div class="thread"><div class="msg-user">${esc(r.text)}</div><div class="turn agent-run">${stepsHtml}${r.events.map(row).join('')}</div></div></div>`;
 }
 
 async function startAgent(text) {
