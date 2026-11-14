@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from ..playbook.engine import GuardFailed, NotFound, StepNotAllowed
+from ..playbook.engine import GuardFailed, NotFound, StepNotAllowed, validate_input
 from ..util import iso, new_id
 from . import charts, explain, query, store
 
@@ -59,11 +59,13 @@ class InsightEngine:
         if sid and not s:
             raise NotFound(f"no analysis session {sid}")
         if tool not in pb["toolStep"]:
-            raise NotFound(f"unknown tool {tool}", known=sorted(pb["toolStep"]))
+            raise NotFound(f"unknown tool {tool}", known=sorted(pb["toolStep"]), next_allowed_tools=self.allowed(s),
+                           fix={"tools": "GET /v1/insights/playbook lists every tool and its input"})
         allowed = self.allowed(s)
         if tool not in allowed:
             raise StepNotAllowed(f"'{tool}' is not allowed yet.", step=s["step"] if s else None,
                                  next_allowed_tools=allowed, insightPlaybookVersion=pb["version"])
+        validate_input(pb["inputs"].get(tool), tool, args)
         t0 = time.perf_counter()
         out = getattr(self, "_" + tool)(s, args)
         if tool == "start_analysis":

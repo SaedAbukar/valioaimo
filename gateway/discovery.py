@@ -150,8 +150,22 @@ SCHEMAS = {
 }
 
 
+def _tool_inputs() -> dict:
+    """Component schemas Input_<tool> from the playbook (1.1.0), one per order tool."""
+    out = {}
+    for t, sch in playbook()["inputs"].items():
+        x = {k: v for k, v in sch.items() if k != "examples"}
+        x["examples"] = sch.get("examples", [])
+        out[f"Input_{t}"] = x
+    return out
+
+
 def openapi(base: str = "") -> dict:
     T = "Discovery"
+    inputs = _tool_inputs()
+    tool_body = {"anyOf": [_ref(k) for k in inputs],
+                 "description": "The input of the tool named in the path: Input_<tool>. Validated before the tool runs "
+                                "(422 bad_input with fix.expected and fix.example). anyOf, not oneOf: several tools take {}."}
     tool_params = [_p("sessionId"), {"name": "tool", "in": "path", "required": True,
                                      "schema": {"enum": sorted(playbook()["toolStep"])}}]
     paths = {
@@ -170,7 +184,7 @@ def openapi(base: str = "") -> dict:
         "/v1/sessions": {"post": _op("Step 0: start a playbook session", "Playbook", _json(_ref("ToolResult")), _ref("StartSession"), errors=("401", "403", "422"))},
         "/v1/sessions/{sessionId}": {"get": _op("Session state, outputs per step, next_allowed_tools", "Playbook", _json({"type": "object"}), params=[_p("sessionId")])},
         "/v1/sessions/{sessionId}/tools/{tool}": {"post": _op("Run one playbook tool (place_order needs PlaceOrderArgs)", "Playbook",
-                                                               _json(_ref("ToolResult")), {"type": "object"}, tool_params + [IDEMPOTENCY_KEY], errors=("401", "403", "409", "422"))},
+                                                               _json(_ref("ToolResult")), tool_body, tool_params + [IDEMPOTENCY_KEY], errors=("401", "403", "409", "422"))},
         "/v1/sessions/{sessionId}/log": {"get": _op("Plain-language log of what the agent did and why", "Audit", _json({"type": "object"}), params=[_p("sessionId")])},
         "/v1/offers/{offerId}": {"get": _op("A signed offer (vc+jwt)", "Offers", _json(_ref("Offer")), params=[_p("offerId")])},
         "/v1/offers/{offerId}/verify": {"post": _op("Six trust checks on an offer: signature, validity, freshness, binding, status, live re-check",
@@ -196,5 +210,5 @@ def openapi(base: str = "") -> dict:
         "paths": paths,
         "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer",
                                                       "description": "Agent, approver or operations credential, bound to one customer account"}},
-                       "schemas": SCHEMAS},
+                       "schemas": {**SCHEMAS, **inputs}},
     }

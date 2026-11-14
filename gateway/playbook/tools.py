@@ -73,7 +73,8 @@ def parse_request(gw, s: dict, args: dict) -> dict:
         brief["changed"] = {"guests": g}
     else:
         if not args.get("text"):
-            raise GuardFailed("parse_request needs 'text' (or 'answer').")
+            raise GuardFailed("parse_request needs 'text' (or 'answer').", guard="bad_input",
+                              fix={"example": {"text": "I need 1,000 litres of lactose-free milk by Monday."}})
         brief = U.parse(args["text"], today, buyer["site"], recipes)
     d["brief"] = brief
     return brief
@@ -83,7 +84,8 @@ def ask_user(gw, s: dict, args: dict) -> dict:
     d = s["data"]
     q = U.question_for(d["brief"], gw.clock.today())
     if not q:
-        raise GuardFailed("Nothing critical is missing; no question needed.", guard="one_question")
+        raise GuardFailed("Nothing critical is missing; no question needed.", guard="one_question",
+                          next_allowed_tools=["recall"], fix={"call": "recall"})
     d["asked"] = q
     return {"question": q}
 
@@ -208,7 +210,7 @@ def get_product(gw, s, args):
         return aimo_products.public(rec)
     p = catalog.by_gtin(pid)
     if not p:
-        raise GuardFailed(f"Unknown product {pid}.")
+        raise GuardFailed(f"Unknown product {pid}.", fix={"call": "search_products", "example": {"query": "oat drink"}})
     return catalog.public_product(p)
 
 
@@ -517,13 +519,17 @@ def offer_ids(s: dict) -> list[str]:
     return list(dict.fromkeys(d["offers"][l["gtin"]]["offerId"] for l in d["plan"]["lines"]))
 
 
-def _cite(s: dict, args: dict):
-    """Inquiry -> commitment at fixed prices: an order cites the signed offers; no price is negotiable."""
+def reject_negotiation(s: dict, args: dict):
     tried = sorted(NEGOTIATION_KEYS & set(args))
     if tried:
         raise GuardFailed("Prices are fixed by the signed offers. There is no negotiation: "
                           f"remove {', '.join(tried)} and cite the offer ids.", guard="fixed_prices",
                           fix={"offerIds": offer_ids(s)})
+
+
+def _cite(s: dict, args: dict):
+    """Inquiry -> commitment at fixed prices: an order cites the signed offers; no price is negotiable."""
+    reject_negotiation(s, args)
     cited = args.get("offerIds")
     want = offer_ids(s)
     if not cited:
@@ -625,7 +631,8 @@ USAGE = {"all": (0.97, "right_sized"), "some": (0.82, "over_ordered"), "ran_out"
 def record_usage(gw, s: dict, args: dict) -> dict:
     d = s["data"]
     if not d.get("order"):
-        raise GuardFailed("Nothing was ordered in this session yet.")
+        raise GuardFailed("Nothing was ordered in this session yet.", next_allowed_tools=["get_session"],
+                          fix={"call": "place_order first"})
     entries = args.get("entries") or {}
     b = d["brief"]
     lines, labels = [], []

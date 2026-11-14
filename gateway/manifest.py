@@ -26,13 +26,14 @@ def tools() -> dict:
     for st in op["steps"]:
         for t in st["tools"]:
             out.append({"name": t, "playbook": "order", "step": st["id"], "n": st["n"], "description": st["does"],
+                        "inputSchema": op["inputs"][t],
                         "rest": "POST /v1/sessions" if t == "start_session" else f"POST /v1/sessions/{{id}}/tools/{t}"})
     ip = insight_playbook()
     for st in ip["steps"]:
         for t in st["tools"]:
             inp = st.get("input")
             out.append({"name": t, "playbook": "insight", "step": st["id"], "n": st["n"], "description": st["does"],
-                        "input": inp.get(t, inp) if isinstance(inp, dict) and t in inp else inp,
+                        "input": inp.get(t, inp) if isinstance(inp, dict) and t in inp else inp, "inputSchema": ip["inputs"][t],
                         "rest": "POST /v1/insights/sessions" if t == "start_analysis" else f"POST /v1/insights/sessions/{{id}}/tools/{t}"})
     return {"playbooks": {"order": op["version"], "insight": ip["version"]}, "tools": out,
             "howTo": ["Look up any time: lookup_products / get_price_availability (read-only).",

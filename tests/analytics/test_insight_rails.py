@@ -17,7 +17,7 @@ def start(E):
 
 def test_playbook_is_versioned_with_six_steps():
     pb = insight_playbook()
-    assert pb["version"] == "1.0.0"
+    assert pb["version"] == "1.1.0"
     assert [s["id"] for s in pb["steps"]] == ["start", "describe", "query", "suggest", "chart", "explain"]
 
 
@@ -42,7 +42,7 @@ def test_full_run_and_audit(E):
     ex = E.call(sid, "explain_result")["output"]
     assert len(ex["facts"]) == 3
     evs = [e for e in E.gw.audit.events(trace_id=sid) if e["action"].startswith("insight.")]
-    assert len(evs) == 7 and all(e["refs"]["insightPlaybookVersion"] == "1.0.0" for e in evs)
+    assert len(evs) == 7 and all(e["refs"]["insightPlaybookVersion"] == "1.1.0" for e in evs)
 
 
 def test_bad_input_returns_fix_hint(E):

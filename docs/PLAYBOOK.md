@@ -73,6 +73,7 @@ curl -s -XPOST localhost:8000/v1/sessions/$SID/tools/place_order   # -> 409 step
 | Version | Date | Change |
 |---|---|---|
 | 1.0.0 | 2026-11-14 | First version: steps 0–8, recall order (favourites → similar orders → learned quantities → standing orders → leftovers), Discover locked without gaps, gateway-run Check, plain-language card lint, price lock, rewinds for chef changes, tips after three over-orders. Six golden scenarios. |
+| 1.1.0 | 2026-11-14 | `inputs:` — one JSON Schema (draft 2020-12, `additionalProperties: false`, a description per field, examples) per tool. Validated before the tool runs: a mismatch is 422 `bad_input` with `fix.expected` and `fix.example`. MCP tools are generated from these schemas (typed parameters, no `args_json`; `call_tool` stays as a fallback). `place_order`, `request_approval` and `record_usage` take an optional `idempotencyKey`. `plan_basket` takes `acceptSuggestion`. Stock is re-checked when the order is placed (409 `stock_changed`). |
 
 ---
 
@@ -103,3 +104,4 @@ builds the same tool calls. Both are shown step by step under "How I made this".
 | Version | Date | Change |
 |---|---|---|
 | insight 1.0.0 | 2026-11-14 | First version: six steps, 13 measures, 11 dimensions, 17 chart types, recipes for small models. |
+| insight 1.1.0 | 2026-11-14 | `inputs:` — a JSON Schema per tool (same validation and `fix` as the order playbook); MCP insight tools are typed. |

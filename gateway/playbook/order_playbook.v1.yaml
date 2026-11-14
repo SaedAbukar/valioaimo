@@ -5,7 +5,7 @@
 # Every call is written to audit_event with this version, so runs replay.
 # Change log and plain-language explanation: docs/PLAYBOOK.md.
 id: order_playbook
-version: "1.0.0"
+version: "1.1.0"
 title: Order playbook — recall first, discover only for gaps
 principle: The agent proposes; the gateway checks and decides. Recall the kitchen's own memory before searching.
 
@@ -248,3 +248,110 @@ schemas:
   ProcessRecord:
     type: object
     required: [processId, labels]
+
+# 1.1.0: one JSON Schema (draft 2020-12) per tool for its input. The gateway validates every call against
+# it before the tool runs; a mismatch is 422 bad_input with fix.expected and fix.example. MCP tools are
+# generated from these schemas, so the fields are typed parameters, not a JSON string.
+inputs:
+  start_session:
+    type: object
+    additionalProperties: false
+    properties:
+      buyerId: {type: string, description: "Customer account; defaults to the credential's own buyer."}
+      agentId: {type: string, description: "Set by the gateway from the credential."}
+      channel: {enum: [api, mcp, chat], description: "Set by the gateway: how the agent connects."}
+    examples: [{}, {buyerId: BUY-POHJOLA}]
+  parse_request:
+    type: object
+    additionalProperties: false
+    properties:
+      text: {type: string, minLength: 1, description: "The request in the chef's own words (English or Finnish)."}
+      answer:
+        type: object
+        description: "The answer to the one question ask_user returned."
+        additionalProperties: false
+        required: [field, value]
+        properties:
+          field: {type: string, description: "The field the question asked for: when, howMuch or where."}
+          value: {description: "The answer, e.g. '2026-11-16' or 1000."}
+    oneOf: [{required: [text]}, {required: [answer]}]
+    examples: [{text: "I need 1,000 litres of lactose-free milk by Monday."}, {answer: {field: when, value: "2026-11-16"}}]
+  ask_user:
+    type: object
+    additionalProperties: false
+    properties: {}
+    examples: [{}]
+  get_favourites: &noargs
+    type: object
+    additionalProperties: false
+    properties: {}
+    examples: [{}]
+  find_similar_orders: *noargs
+  get_learned_quantities: *noargs
+  get_standing_orders: *noargs
+  get_leftovers: *noargs
+  recall: *noargs
+  search_products:
+    type: object
+    additionalProperties: false
+    properties:
+      query: {type: string, description: "What to look for, e.g. 'oat drink'."}
+      need: {type: string, description: "A gap from recall; used as the query when query is empty."}
+      excludeAllergens: {type: array, items: {type: string}, description: "Allergens the product must not contain."}
+      diet: {type: array, items: {type: string}, description: "Diet claims the product must have, e.g. vegan."}
+      limit: {type: integer, minimum: 1, maximum: 50, description: "How many results (default 10)."}
+    examples: [{query: oat drink}, {need: cream, excludeAllergens: [nuts], limit: 5}]
+  get_product:
+    type: object
+    additionalProperties: false
+    required: [productId]
+    properties:
+      productId: {type: string, description: "GTIN or Valio Aimo product id from search_products."}
+    examples: [{productId: "06439990001072"}]
+  request_offers: *noargs
+  plan_basket:
+    type: object
+    additionalProperties: false
+    properties:
+      choices: {type: object, additionalProperties: {type: string}, description: "lineId -> productId, for a line with pendingChoices."}
+      useAlternative: {type: string, description: "lineId whose safe alternative (from cantDo) to use."}
+      acceptTip: {type: string, description: "tipId to apply."}
+      ignoreTip: {type: string, description: "tipId to ignore."}
+      acceptSuggestion: {type: string, description: "suggestionId from get_suggestions (Valio Aimo seller) to add; re-plans and re-checks."}
+    examples: [{}, {choices: {L1: "06439990001072"}}, {acceptTip: TIP-1}]
+  check_basket: *noargs
+  render_cards:
+    type: object
+    additionalProperties: false
+    properties:
+      cards: {type: array, items: {type: object}, description: "Optional own wording; must pass the same plain-language lint."}
+    examples: [{}]
+  place_order:
+    type: object
+    additionalProperties: false
+    properties:
+      offerIds: {type: array, items: {type: string}, minItems: 1, description: "Exactly the offer ids of the checked basket (plan_basket.offers)."}
+      idempotencyKey: {type: string, maxLength: 200, description: "Retry-safe: the same key and body return the same order."}
+    examples: [{offerIds: [OF-1A2B3C4D]}, {offerIds: [OF-1A2B3C4D], idempotencyKey: order-2026-11-13-01}]
+  request_approval:
+    type: object
+    additionalProperties: false
+    properties:
+      note: {type: string, description: "Optional note for the approver."}
+      idempotencyKey: {type: string, maxLength: 200, description: "Retry-safe: one approval request per key."}
+    examples: [{}]
+  record_usage:
+    type: object
+    additionalProperties: false
+    properties:
+      entries: {type: object, additionalProperties: {enum: [all, some, ran_out]}, description: "need -> how much was used."}
+      idempotencyKey: {type: string, maxLength: 200, description: "Retry-safe: the outcome is recorded once per key."}
+    examples: [{entries: {lactose-free milk: all}}]
+  get_tips:
+    type: object
+    additionalProperties: false
+    properties:
+      eventType: {type: string, description: "Optional event type, e.g. gala_dinner."}
+    examples: [{}]
+  get_session: *noargs
+  get_playbook: *noargs

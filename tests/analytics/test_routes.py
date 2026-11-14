@@ -18,7 +18,7 @@ def test_tool_manifest_covers_order_and_insight_journeys(c):
     names = {t["name"] for t in m["tools"]}
     assert {"start_session", "parse_request", "place_order", "record_usage"} <= names
     assert {"start_analysis", "describe_data", "run_query", "build_chart", "explain_result"} <= names
-    assert m["playbooks"] == {"order": "1.0.0", "insight": "1.0.0"}
+    assert m["playbooks"] == {"order": "1.1.0", "insight": "1.1.0"}
 
 
 def test_insight_rails_over_rest(c):

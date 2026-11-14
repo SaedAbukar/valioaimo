@@ -129,3 +129,73 @@ def test_approval_decision_is_idempotent(c):
     assert r2.headers.get("Idempotent-Replay") == "true"
     assert c.post(f"/v1/approvals/{aid}", json={"ok": False}, headers=h).status_code == 422
     assert c.post(f"/v1/approvals/{aid}", json={"ok": True}, headers=LAURA).status_code == 422  # no key: already decided
+
+
+# ---------------------------------------------------------------- Task 3: typed tool inputs
+from gateway.analytics.engine import insight_playbook  # noqa: E402
+from gateway.playbook.engine import playbook, public_playbook  # noqa: E402
+
+
+def _all_inputs():
+    pb, ip = playbook(), insight_playbook()
+    return [(t, pb.get("inputs", {}).get(t)) for t in pb["toolStep"]] + [(t, ip.get("inputs", {}).get(t)) for t in ip["toolStep"]]
+
+
+@pytest.mark.parametrize("tool,schema", _all_inputs(), ids=[t for t, _ in _all_inputs()])
+def test_every_tool_has_an_input_schema(tool, schema):
+    from jsonschema import Draft202012Validator
+    assert schema, f"{tool} has no input schema"
+    Draft202012Validator.check_schema(schema)
+    assert schema["type"] == "object" and schema["additionalProperties"] is False
+    assert schema["examples"] and all(Draft202012Validator(schema).is_valid(e) for e in schema["examples"])
+    assert all(p.get("description") for p in schema.get("properties", {}).values()), tool
+
+
+def test_playbooks_are_1_1_0():
+    assert public_playbook()["version"] == "1.1.0" and insight_playbook()["version"] == "1.1.0"
+
+
+def test_bad_input_has_a_fix_with_an_example(c):
+    sid, _ = http_to_present(c)
+    r = c.post(f"/v1/sessions/{sid}/tools/place_order", json={"offerId": "x"}, headers=AGENT)
+    assert r.status_code == 422 and r.json()["guard"] == "bad_input"
+    assert r.json()["fix"]["example"]["offerIds"] and r.json()["fix"]["expected"]
+    assert "offerId" in r.json()["message"]
+
+
+def test_tool_manifest_lists_input_schemas(c):
+    tools = {t["name"]: t for t in c.get("/v1/tools").json()["tools"]}
+    assert tools["place_order"]["inputSchema"]["properties"]["offerIds"]
+    assert tools["run_query"]["inputSchema"]["properties"]["measures"]
+
+
+def _correctable(r):
+    b = r.json()
+    return b.get("fix") or b.get("next_allowed_tools")
+
+
+def test_every_4xx_in_rails_has_fix_or_next_allowed_tools(c):
+    bad = []
+    sid = c.post("/v1/sessions", json={}, headers=AGENT).json()["sessionId"]
+    u = f"/v1/sessions/{sid}/tools/"
+    cases = [("place_order", {}), ("parse_request", {}), ("parse_request", {"txt": "milk"}), ("no_such_tool", {}),
+             ("parse_request", {"text": 42})]
+    for tool, a in cases:
+        r = c.post(u + tool, json=a, headers=AGENT)
+        if r.status_code >= 400 and not _correctable(r):
+            bad.append((tool, a, r.status_code, r.json()))
+    sid, out = http_to_present(c)
+    u = f"/v1/sessions/{sid}/tools/"
+    ids = [o["offerId"] for o in out["plan_basket"]["offers"]]
+    for tool, a in [("place_order", {}), ("place_order", {"offerIds": ids, "unitPrice": 1}), ("place_order", {"offerIds": ["OF-X"]}),
+                    ("ask_user", {}), ("get_product", {"productId": "nope"}), ("record_usage", {"entries": {}})]:
+        r = c.post(u + tool, json=a, headers=AGENT)
+        if r.status_code >= 400 and not _correctable(r):
+            bad.append((tool, a, r.status_code, r.json()))
+    ana = c.post("/v1/insights/sessions", json={"buyerId": "BUY-POHJOLA"}, headers=AGENT).json()["output"]["sessionId"]
+    for tool, a in [("run_query", {}), ("describe_data", {"x": 1}), ("get_values", {"field": "nope"}),
+                    ("build_chart", {"type": "line"})]:
+        r = c.post(f"/v1/insights/sessions/{ana}/tools/{tool}", json=a, headers=AGENT)
+        if r.status_code >= 400 and not _correctable(r):
+            bad.append((tool, a, r.status_code, r.json()))
+    assert not bad, bad

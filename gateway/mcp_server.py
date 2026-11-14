@@ -28,7 +28,7 @@ from .core import Gateway  # noqa: E402
 from .playbook.engine import PlaybookError, playbook, public_playbook  # noqa: E402
 from .analytics.analyst import Analyst  # noqa: E402
 from .analytics.engine import insight_playbook, public as insight_public  # noqa: E402
-from . import auth, discovery, lookup, manifest, trust  # noqa: E402
+from . import auth, discovery, lookup, manifest, mcp_tools, trust  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
 from .policy import published_rules  # noqa: E402
 
@@ -148,19 +148,6 @@ def call_tool(sessionId: str, tool: str, args_json: str = "{}", idempotencyKey: 
     return _run(sessionId, tool, args)
 
 
-def _register(name: str):
-    def fn(sessionId: str, args_json: str = "{}") -> str:
-        return _run(sessionId, name, json.loads(args_json or "{}"))
-    fn.__name__ = name
-    step = playbook()["toolStep"][name]
-    fn.__doc__ = f"Playbook step '{step}': {playbook()['byId'][step]['does']} (args as JSON)."
-    mcp.tool(name=name, description=fn.__doc__)(fn)
-
-
-for _t in playbook()["toolStep"]:
-    if _t != "start_session":
-        _register(_t)
-
 ANALYST = Analyst(GW)
 
 
@@ -183,22 +170,17 @@ def get_insight_playbook() -> str:
     return json.dumps(insight_public(), ensure_ascii=False)
 
 
-def _register_insight(name: str, step: dict):
-    if name == "start_analysis":
-        def fn(buyerId: str, siteId: str | None = None) -> str:
-            if buyerId != ME.buyer_id:
-                return _dump({"status": 403, "error": "forbidden", "message": f"This agent acts only for {ME.buyer_id}."})
-            return _run_insight(None, "start_analysis", {"buyerId": buyerId, "siteId": siteId, "agent": "mcp"})
-    else:
-        def fn(sessionId: str, args_json: str = "{}") -> str:
-            return _run_insight(sessionId, name, json.loads(args_json or "{}"))
-    fn.__name__ = name
-    mcp.tool(name=name, description=f"Insight step '{step['id']}': {step['does']} (args as JSON)")(fn)
+@mcp.tool()
+def start_analysis(buyerId: str | None = None, siteId: str | None = None) -> str:
+    """Insight step 0 'start': open an analysis for this agent's buyer (optionally one kitchen). Data never crosses buyers."""
+    if buyerId and buyerId != ME.buyer_id:
+        return _dump({"status": 403, "error": "forbidden", "message": f"This agent acts only for {ME.buyer_id}."})
+    return _run_insight(None, "start_analysis", {"buyerId": ME.buyer_id, "siteId": siteId, "agent": "mcp"})
 
 
-for _st in insight_playbook()["steps"]:
-    for _t in _st["tools"]:
-        _register_insight(_t, _st)
+# one typed tool per order and insight tool, generated from the playbooks' input schemas (1.1.0)
+globals().update(mcp_tools.register(mcp, playbook(), insight_playbook(), _run, _run_insight,
+                                   skip={"start_session", "start_analysis", "get_playbook"}))
 
 
 @mcp.tool()

@@ -75,6 +75,30 @@ def _schema(name: str) -> dict:
     return s
 
 
+def _expected(schema: dict) -> dict:
+    """A short, readable summary of an input schema: field -> 'type, required: description'."""
+    req = set(schema.get("required", []))
+    out = {}
+    for k, p in schema.get("properties", {}).items():
+        t = p.get("type") or ("one of " + "|".join(map(str, p["enum"])) if "enum" in p else "value")
+        out[k] = f"{'|'.join(t) if isinstance(t, list) else t}{', required' if k in req else ''}: {p.get('description', '')}".rstrip(": ")
+    return out
+
+
+def validate_input(schema: dict | None, tool: str, args: dict):
+    """Check a tool's input against its playbook schema; a mismatch is 422 bad_input with what is expected and an example."""
+    if not schema:
+        return
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(args))
+    if not errors:
+        return
+    e = jsonschema.exceptions.best_match(errors)
+    where = ".".join(str(p) for p in e.absolute_path)
+    example = next((x for x in schema.get("examples", []) if x), (schema.get("examples") or [{}])[0])
+    raise GuardFailed(f"{tool}: {(where + ': ') if where else ''}{e.message}", guard="bad_input",
+                      fix={"expected": _expected(schema), "example": example})
+
+
 def validate(name: str, output: dict):
     try:
         jsonschema.validate(output, _schema(name))
@@ -184,12 +208,16 @@ class Engine:
             return {"tool": tool, "output": self.view(s) if tool == "get_session" else public_playbook(),
                     "next_allowed_tools": self.allowed(s)}
         if tool not in pb["toolStep"]:
-            raise NotFound(f"unknown tool {tool}", known=sorted(pb["toolStep"]))
+            raise NotFound(f"unknown tool {tool}", known=sorted(pb["toolStep"]),
+                           next_allowed_tools=self.allowed(s), fix={"tools": "GET /v1/playbook lists every tool and its input"})
         allowed = self.allowed(s)
         if tool not in allowed:
             raise StepNotAllowed(f"'{tool}' is not allowed at step '{s['step'] if s else 'none'}'.",
                                  step=s["step"] if s else None, next_allowed_tools=allowed,
                                  playbookVersion=pb["version"])
+        if tool == "place_order":
+            self.tools.reject_negotiation(s, args)  # a price field is a negotiation attempt, not a typo
+        validate_input(pb["inputs"].get(tool), tool, args)
         step_id = pb["toolStep"][tool]
         t0 = time.perf_counter()
         if tool == "start_session":

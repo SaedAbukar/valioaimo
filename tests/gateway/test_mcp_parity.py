@@ -46,3 +46,19 @@ def test_mcp_place_order_is_retry_safe_with_an_idempotency_key():
     assert "output" in a, a
     b = json.loads(m.call_tool(sid, "place_order", json.dumps({"offerIds": ids}), idempotencyKey="mcp-1"))
     assert a["output"]["orderId"] == b["output"]["orderId"] and b["idempotentReplay"]
+
+
+def test_mcp_order_tools_are_typed():
+    tools = {t.name: t for t in asyncio.run(m.mcp.list_tools())}
+    po = tools["place_order"].input_schema["properties"]
+    assert "offerIds" in po and "args_json" not in po and "idempotencyKey" in po
+    assert "text" in tools["parse_request"].input_schema["properties"]
+    assert "measures" in tools["run_query"].input_schema["properties"]
+    assert "args_json" in tools["call_tool"].input_schema["properties"]  # generic fallback stays
+
+
+def test_mcp_typed_call_runs_the_same_rails():
+    sid = json.loads(m.start_session())["sessionId"]
+    r = json.loads(m.parse_request(sessionId=sid, text=BRIEF))
+    assert r["step"] == "understand"
+    assert json.loads(m.place_order(sessionId=sid, offerIds=["x"]))["error"] == "step_not_allowed"

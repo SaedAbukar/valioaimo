@@ -18,7 +18,7 @@ def start(gw, bid="BUY-POHJOLA"):
 
 def test_playbook_is_versioned_and_complete():
     pb = public_playbook()
-    assert pb["version"] == "1.0.0"
+    assert pb["version"] == "1.1.0"
     assert [s["n"] for s in pb["steps"]] == list(range(9))
     assert pb["steps"][2]["order"] == ["favourites", "similar_orders", "learned_quantities", "standing_orders", "leftovers"]
     for s in pb["steps"]:
@@ -111,7 +111,7 @@ def test_every_step_is_audited_with_playbook_version(gw):
     sid = _to_present(gw)
     evs = [e for e in gw.audit.events(trace_id=sid) if e["action"].startswith("playbook.")]
     assert [e["refs"]["step"] for e in evs] == ["receive", "understand", "recall", "plan", "check", "present"]
-    assert all(e["refs"]["playbookVersion"] == "1.0.0" and "ms" in e["refs"] for e in evs)
+    assert all(e["refs"]["playbookVersion"] == "1.1.0" and "ms" in e["refs"] for e in evs)
     assert gw.audit.verify()["ok"]
 
 
