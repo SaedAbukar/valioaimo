@@ -56,6 +56,7 @@ class Gateway:
         from .seller import new_state
         self.seller_state = new_state()  # Valio Aimo seller agent: suggestions, dismissals, last run per buyer
         self.chat_convs: dict[str, dict] = {}  # the chef app's conversations (playbook/agent.py)
+        self.agent_chats: dict[str, dict] = {}  # Agent-mode chats (chat_agent.py), saved after every turn
         from . import persist
         self.restored = persist.load(self)
 

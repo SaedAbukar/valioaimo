@@ -583,6 +583,24 @@ def make_app(live: bool = True) -> Starlette:
     from .chat_agent import ChatAgent
     chat_agent = ChatAgent(os.environ.get("AIMO_PUBLIC_URL", "http://127.0.0.1:" + os.environ.get("PORT", "8000")))
 
+    def save_run(run):
+        g = gw()
+        g.agent_chats[run.id] = run.record()
+        g.save()
+    chat_agent.on_change = save_run
+
+    def find_run(rid):
+        return chat_agent.get(rid, gw().agent_chats)
+
+    @guarded
+    async def agent_list(req: Request):
+        c, bid = buyer_of(req)
+        rows = sorted((r for r in gw().agent_chats.values() if r["buyerId"] == bid), key=lambda r: -r["at"])
+        return JSONResponse({"chats": [{"id": r["id"], "title": r["title"], "status": r["status"], "at": r["at"]} for r in rows[:50]]})
+
+    async def agent_runs_ep(req: Request):
+        return await (agent_runs(req) if req.method == "POST" else agent_list(req))
+
     @guarded
     async def agent_status(req: Request):
         caller(req, "user", "human")
@@ -603,7 +621,7 @@ def make_app(live: bool = True) -> Starlette:
     @guarded
     async def agent_reply(req: Request):
         c = caller(req, "user", "human")
-        run = chat_agent.runs.get(req.path_params["rid"])
+        run = find_run(req.path_params["rid"])
         if not run:
             raise NotFound("No such agent run.")
         auth.same_buyer(c, run.buyer_id)
@@ -618,13 +636,13 @@ def make_app(live: bool = True) -> Starlette:
     @guarded
     async def agent_events(req: Request):
         c = caller(req, "user", "human")
-        run = chat_agent.runs.get(req.path_params["rid"])
+        run = find_run(req.path_params["rid"])
         if not run:
             raise NotFound("No such agent run.")
         auth.same_buyer(c, run.buyer_id)
         after, wait = int(req.query_params.get("after", 0)), float(req.query_params.get("wait", 0))
         evs = await off_loop(run.wait, after, wait)
-        return JSONResponse({"runId": run.id, "status": run.status, "events": evs, "next": after + len(evs)})
+        return JSONResponse({"runId": run.id, "status": run.status, "text": run.text, "events": evs, "next": after + len(evs)})
 
     app = Starlette(lifespan=lifespan, routes=[
         Route("/v1/orders/history/{oid}", order_detail), Route("/v1/orders/{sid}/activity", activity),
@@ -654,7 +672,7 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/ops/orders", ops_orders), Route("/v1/ops/metrics", ops_metrics), Route("/v1/ops/demand", ops_demand),
         Route("/v1/ops/lost-sales", ops_lost_sales), Route("/v1/ops/inventory", ops_inventory),
         Route("/v1/demo/clock", demo_clock, methods=["POST"]),
-        Route("/v1/agent/status", agent_status), Route("/v1/agent/runs", agent_runs, methods=["POST"]),
+        Route("/v1/agent/status", agent_status), Route("/v1/agent/runs", agent_runs_ep, methods=["GET", "POST"]),
         Route("/v1/agent/runs/{rid}/events", agent_events), Route("/v1/agent/runs/{rid}/reply", agent_reply, methods=["POST"]),
         Route("/mcp", _Asgi(mcp_asgi), methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_asgi),
     ])

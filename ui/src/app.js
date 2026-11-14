@@ -42,7 +42,7 @@ const CARD_ICON = { understood: 'eye', question: 'question', favourites: 'star',
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 const KITCHENS = {
-  'BUY-POHJOLA': { name: 'Hotelli Pohjola', person: 'Jari Lehtonen', role: 'Executive chef', initials: 'JL',
+  'BUY-POHJOLA': { name: 'Hotelli Pohjola', person: 'John Doe', role: 'Executive chef', initials: 'JD',
     ideas: [['Gala dinner for 180 on Saturday 21.11.: salmon starter, beef tenderloin, chocolate mousse. 12 vegan, 8 gluten-free, 1 nut allergy.', 'An event, start to finish'],
       ['I need 1,000 L lactose-free milk by Monday', 'A big top-up of a favourite'],
       ['Pikkujoulut 120 hengelle: kinkku, rosolli, laatikot, riisipuuro. 6 vegaania.', 'In Finnish, with one thing missing']] },
@@ -94,6 +94,7 @@ const Live = {
   agentStatus: () => Live.j('/v1/agent/status'),
   agentRun: (text) => Live.j('/v1/agent/runs', { text }),
   agentEvents: (rid, after) => Live.j(`/v1/agent/runs/${rid}/events?after=${after}&wait=20`),
+  agentChats: (bid) => Live.j('/v1/agent/runs?buyerId=' + bid),
   agentReply: (rid, text) => Live.j(`/v1/agent/runs/${rid}/reply`, { text }),
 };
 
@@ -208,7 +209,7 @@ function render() {
     <button class="new-chat" data-go="new">${ic('plus')} New chat</button>
     <nav class="nav">${nav.map(([v, l, i]) => `<button data-go="${v}" ${S.view === v ? 'aria-current="page"' : ''}>${ic(i)} ${l}${v === 'orders' && waiting ? `<span class="badge">${waiting}</span>` : ''}</button>`).join('')}</nav>
     <div class="recent-h">Recent chats</div>
-    <div class="recent">${S.chats.map((c) => `<button data-chat="${c.id}" ${c.id === S.convId && S.view === 'chat' ? 'aria-current="true"' : ''}>${esc(c.title)}</button>`).join('') || '<span class="muted" style="padding:8px 12px;font-size:15px">No chats yet</span>'}</div>
+    <div class="recent">${S.chats.map((c) => `<button ${c.agent ? `data-achat="${c.id}"` : `data-chat="${c.id}"`} ${S.view === 'chat' && (c.agent ? S.agentRun && S.agentRun.id === c.id : c.id === S.convId && !S.agentRun) ? 'aria-current="true"' : ''}>${esc(c.title)}</button>`).join('') || '<span class="muted" style="padding:8px 12px;font-size:15px">No chats yet</span>'}</div>
     <button class="who" data-go="settings"><span class="av">${k.initials}</span><span><b>${esc(k.person)}</b><span>${esc(k.name)}</span></span></button>
   </aside>
   <main class="main">
@@ -335,6 +336,14 @@ function splitQuestions(text) {
   }
   return { intro: intro.join(' '), qs };
 }
+// "Should I look for oat milk, or use the lactose-free milk?" -> ['Look for oat milk', 'Use the lactose-free milk']
+function eitherOr(q) {
+  if (/such as|\bany\b|\blike\b/i.test(q)) return null;  // a list of examples, not a choice
+  const m = String(q).replace(/^.*[.!]["”]?\s+(?=\S[^.!]*\?$)/, '').replace(/\s+(for example|e\.g\.).*$/i, '').match(/^(?:do you want me to|do you want|should i|would you like me to|would you like|shall i|is it an?|is it|will it be an?|will it be)?\s*(.+?),?\s+or\s+(?:do you want(?: me to)?\s+|should i\s+|would you like\s+)?(.+?)\??$/i);
+  if (!m || m[1].length > 60 || m[2].length > 60 || /^(not|no)$/i.test(m[2])) return null;
+  const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1).replace(/[.?]+$/, '');
+  return [cap(m[1]), cap(m[2])];
+}
 function kindOf(q) {
   if (/^(which|what) (products?|items?|dishes|food|toppings|ingredients)|what (do|should|would) you (need|like|want)/i.test(q)) return 'open';
   if (/how many|guests|people|persons/i.test(q)) return 'howMuch';
@@ -346,7 +355,8 @@ function questionHtml(e, live) {
   const ans = S.askAnswers || {};
   const rows = qs.map((q, i) => {
     const k = kindOf(q);
-    const opts = k === 'yesno' ? [['Yes', 'Yes'], ['No', 'No']] : k === 'open' ? [] : (QUICK[k] || []).map(([l]) => [l, l]);
+    const two = k === 'yesno' && eitherOr(q);
+    const opts = two ? two.map((x) => [x, x]) : k === 'yesno' ? [['Yes', 'Yes'], ['No', 'No']] : k === 'open' ? [] : (QUICK[k] || []).map(([l]) => [l, l]);
     const custom = S.askCustom === i || (k === 'open' && !ans[i])
       ? `<form class="ask-custom" data-ask-i="${i}"><input class="custom-in" name="v" placeholder="${esc(CUSTOM_HINT[k] || 'Your answer')}" aria-label="Your answer"><button class="btn primary sm-btn" type="submit">OK</button></form>`
       : `<button class="fchip custom ${ans[i] && !opts.some(([, v]) => v === ans[i]) ? 'on' : ''}" data-ask-custom="${i}">${ic('plus')} ${ans[i] && !opts.some(([, v]) => v === ans[i]) ? esc(ans[i]) : 'Custom…'}</button>`;
@@ -412,7 +422,7 @@ async function pollAgent() {
   try {
     while (S.agentRun === run) {
       const r = await API.agentEvents(run.id, run.after || 0);
-      run.events.push(...r.events); run.after = r.next; run.status = r.status;
+      run.events.push(...r.events); run.after = r.next; run.status = r.status; if (!run.text) run.text = r.text || '';
       renderView();
       if (r.status !== 'running') break;
     }
@@ -428,7 +438,7 @@ async function startAgent(text) {
   }
   S.agentRun = { text, events: [], status: 'running', after: 0 };
   renderView();
-  try { S.agentRun.id = (await API.agentRun(text)).runId; } catch (e) { S.agentRun.status = 'error'; S.agentRun.events.push({ type: 'error', reason: e.message }); return renderView(); }
+  try { S.agentRun.id = (await API.agentRun(text)).runId; refresh(); } catch (e) { S.agentRun.status = 'error'; S.agentRun.events.push({ type: 'error', reason: e.message }); return renderView(); }
   return pollAgent();
 }
 
@@ -513,8 +523,9 @@ function applyConv(c) {
 
 async function refresh() {
   try {
-    const [ch, b] = await Promise.all([API.chats(S.buyerId), API.board(S.buyerId)]);
-    S.chats = ch.chats; S.board = b;
+    const [ch, b, ac] = await Promise.all([API.chats(S.buyerId), API.board(S.buyerId),
+      API.agentChats ? API.agentChats(S.buyerId).catch(() => ({ chats: [] })) : { chats: [] }]);
+    S.chats = ac.chats.map((c) => Object.assign({ agent: true }, c)).concat(ch.chats); S.board = b;  // saved Agent-mode chats first, newest on top
   } catch (e) { /* offline */ }
   render();
   if (S.panel && S.panel.kind === 'order') openOrder(S.panel.id, true);
@@ -621,7 +632,7 @@ async function loadSettings() {
   const theme = store.get('theme', 'system');
   const eur = (v) => (v == null ? '—' : '€' + Number(v).toLocaleString('en-US'));
   S.settingsHtml = `<div class="wrap"><div class="page-h"><h1>Settings</h1></div>
-    <div class="section"><h2>Recent chats</h2><div class="list" id="m-recent">${S.chats.slice(0, 5).map((c) => `<button class="li" data-chat="${c.id}"><span>${esc(c.title)}</span></button>`).join('') || '<div class="li muted">No chats yet</div>'}</div></div>
+    <div class="section"><h2>Recent chats</h2><div class="list" id="m-recent">${S.chats.slice(0, 5).map((c) => `<button class="li" ${c.agent ? `data-achat="${c.id}"` : `data-chat="${c.id}"`}><span>${esc(c.title)}</span></button>`).join('') || '<div class="li muted">No chats yet</div>'}</div></div>
     <div class="section"><h2>Kitchen</h2><div class="list">${Object.entries(KITCHENS).map(([id, k]) => `<button class="li" data-buyer="${id}"><span class="radio ${id === S.buyerId ? 'on' : ''}"></span><span>${esc(k.name)}<small>${esc(k.person)} · ${esc(k.role)}</small></span></button>`).join('')}</div></div>
     <div class="section"><h2>Favourites</h2><div class="list">${d.favourites.map((f) => `<div class="li"><span>${esc(f.name)}</span>${f.pinned ? '<small>Always first</small>' : ''}</div>`).join('') || '<div class="li"><span>None yet<small>I remember what you pick, so this fills up by itself.</small></span></div>'}</div></div>
     <div class="section"><h2>Spending limits</h2><div class="list">${d.limits.map((l) => `<div class="li"><span>${esc(l.label)}</span><b class="num">${eur(l.value)}</b></div>`).join('')}</div></div>
@@ -691,7 +702,11 @@ document.addEventListener('click', async (e) => {
     if (d.go === 'orders') { refresh(); window.AimoOrders.load(); }
     return;
   }
-  if (d.chat) { if (!S.convs[d.chat]) applyConv(await API.chatGet(d.chat)); S.convId = d.chat; S.view = 'chat'; S.panel = null; return render(); }
+  if (d.achat) {  // a saved Agent-mode chat: its events come back from the gateway, and it can be continued
+    S.agentRun = { id: d.achat, text: '', events: [], status: 'running', after: 0 }; S.agentMode = true; S.convId = null; S.view = 'chat'; S.panel = null;
+    render(); return pollAgent();
+  }
+  if (d.chat) { S.agentRun = null; if (!S.convs[d.chat]) applyConv(await API.chatGet(d.chat)); S.convId = d.chat; S.view = 'chat'; S.panel = null; return render(); }
   if (d.send) return send(d.send);
   if (d.act) return onCardAction(d.card, +d.act);
   if (d.opt) return onOption(d.card, +d.opt);
@@ -749,10 +764,7 @@ async function boot() {
     applyConv(await Replay.chatGet(cid));
   } else {
     API = Live; S.mode = 'live';
-    const ch = await API.chats(S.buyerId);
-    const last = store.get('conv', null);
-    const pick = ch.chats.find((c) => c.id === last) || ch.chats[ch.chats.length - 1];
-    if (pick) applyConv(await API.chatGet(pick.id));
+    S.convId = null; S.agentRun = null; S.view = 'chat';  // the app opens on a new, empty chat; earlier ones are in Recent chats
     try { S.agentAvail = await API.agentStatus(); } catch (e) { S.agentAvail = { available: false, reason: 'Agent mode is not available.' }; }
     S.agentMode = !!(S.agentAvail.available && store.get('agentMode', true));
   }

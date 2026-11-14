@@ -51,9 +51,9 @@ def test_chat_action_cannot_reach_another_buyers_session(c):
 
 def test_chat_approve_by_someone_who_is_not_an_approver_fails(c):
     cid, sid = gala_waiting_for_ok(c)
-    jari = {"Authorization": "Bearer demo-human-usr-jlehtonen"}  # Pohjola approver too: allowed, named as himself
+    jari = {"Authorization": "Bearer demo-human-usr-jlehtonen"}  # Pohjola approver too: allowed, named as themself
     r = c.post(f"/v1/chat/{cid}/actions", json={"action": "approve"}, headers=jari).json()
-    assert c.app.state.gw().engine.sessions[sid]["data"]["approval"]["decidedBy"] == "Jari Lehtonen"
+    assert c.app.state.gw().engine.sessions[sid]["data"]["approval"]["decidedBy"] == "John Doe"
 
 
 # ---------------------------------------------------------------- Critical 2

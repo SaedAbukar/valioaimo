@@ -27,7 +27,8 @@ def snapshot(gw) -> dict:
     return {"sessions": gw.engine.sessions, "orders": gw.orders, "approvals": gw.approvals, "inbox": gw.inbox,
             "kill_switch": gw.kill_switch, "events": gw.events.log, "idem": gw.engine.idem,
             "memory": getattr(gw, "memory", None), "backend": _backend(gw.backend),
-            "seller": gw.seller_state, "chats": gw.chat_convs}
+            "seller": gw.seller_state, "chats": gw.chat_convs,
+            "agent_chats": getattr(gw, "agent_chats", None)}
 
 
 def save(gw):
@@ -55,6 +56,8 @@ def load(gw) -> bool:
         gw.memory = got["memory"]
     if got["chats"] is not None:
         gw.chat_convs.update(got["chats"])
+    if got.get("agent_chats") is not None:
+        gw.agent_chats.update(got["agent_chats"])
     if got["seller"] is not None:
         gw.seller_state = got["seller"]
     b = got["backend"]

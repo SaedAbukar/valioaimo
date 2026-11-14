@@ -24,7 +24,7 @@
     },
     {
      "id": "usr-jlehtonen",
-     "name": "Jari Lehtonen",
+     "name": "John Doe",
      "role": "Executive Chef"
     }
    ],
@@ -366,7 +366,7 @@
      "type": "Central kitchen · hotel restaurant",
      "address": "Mannerheimintie 12, Helsinki",
      "scale": 1.0,
-     "lead": "Jari Lehtonen"
+     "lead": "John Doe"
     },
     {
      "id": "SITE-POH-TRE",

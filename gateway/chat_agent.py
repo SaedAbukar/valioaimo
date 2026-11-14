@@ -85,6 +85,24 @@ class Run:
         self.tools: list[dict] | None = None
         self.ordered = False
         self.cond = threading.Condition()
+        self.at = round(time.time(), 3)
+
+    def record(self) -> dict:
+        """What is saved so the chat shows up again after a reload or a restart (and can be continued)."""
+        def msg(m):
+            c = m["content"]
+            return {"role": m["role"], "content": c if isinstance(c, str) else [_param(b) for b in c]}
+        return {"id": self.id, "buyerId": self.buyer_id, "title": " ".join(self.text.split())[:60], "text": self.text,
+                "status": self.status, "at": self.at, "events": list(self.events),
+                "messages": [msg(m) for m in self.messages], "ordered": self.ordered}
+
+    @classmethod
+    def restore(cls, rec: dict) -> "Run":
+        run = cls(rec["buyerId"], rec["text"])
+        run.id, run.at, run.events, run.messages = rec["id"], rec.get("at", run.at), list(rec["events"]), rec.get("messages") or run.messages
+        run.ordered = rec.get("ordered", False)
+        run.status = rec["status"] if rec["status"] != "running" else "stopped"  # a run cut off by a restart
+        return run
 
     def emit(self, type_: str, **data):
         with self.cond:
@@ -110,6 +128,20 @@ class ChatAgent:
         self.runs: dict[str, Run] = {}
         self.client = None
         self.post: Callable | None = None
+        self.on_change: Callable | None = None  # saves a run (set by the app)
+
+    def get(self, rid: str, saved: dict | None = None) -> Run | None:
+        """A run in memory, or one saved earlier (brought back so the chat can continue)."""
+        if rid not in self.runs and saved and rid in saved:
+            self.runs[rid] = Run.restore(saved[rid])
+        return self.runs.get(rid)
+
+    def _saved(self, run: Run):
+        if self.on_change:
+            try:
+                self.on_change(run)
+            except Exception:  # noqa: BLE001 - saving never breaks the chat
+                pass
 
     # ------------------------------------------------------------ plumbing
     def _client(self):
@@ -153,10 +185,13 @@ class ChatAgent:
         threading.Thread(target=self._safe, args=(run, token), daemon=True).start()
 
     def _safe(self, run: Run, token: str):
+        self._saved(run)
         try:
             self._loop(run, token)
         except Exception as e:  # noqa: BLE001 - the error class only: never a key, URL or prompt
             run.emit("error", reason=f"The agent stopped: {type(e).__name__}.")
+        finally:
+            self._saved(run)
 
     def _loop(self, run: Run, token: str):
         if run.tools is None:
