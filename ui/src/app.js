@@ -88,6 +88,8 @@ const Live = {
   wrapped: (bid, site) => Live.j(`/v1/insights/wrapped?buyerId=${bid}${site ? '&siteId=' + site : ''}`),
   ask: (bid, prompt, filters, site) => Live.j('/v1/insights/ask', { buyerId: bid, prompt, filters, siteId: site || null }),
   kitchens: (bid) => Live.j('/v1/kitchens?buyerId=' + bid),
+  // the demo switch to Valio Aimo's side uses the operations demo credential (demo mode only)
+  ops: (path) => Live.j('/v1/ops/' + path, undefined, 'demo-ops'),
 };
 
 const Replay = (() => {

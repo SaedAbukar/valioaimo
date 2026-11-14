@@ -62,6 +62,27 @@ class _Asgi:
         await self.app(scope, receive, send)
 
 
+# other customers' agents ordered for Monday too, so Valio Aimo's operations view has >= 3 customers to show (k-anonymity)
+DEMO_OTHERS = [("BUY-KAARI", "40 L soy drink by Monday"), ("BUY-KOULU", "60 L oat drink by Monday"),
+               ("BUY-UUSI", "100 L milk by Monday")]
+
+
+def seed_demo(agent):
+    """The app opens on the gala example, already ordered; three other kitchens have one request each."""
+    for bid, text in DEMO_OTHERS:
+        r = agent.message(None, text, bid)
+        cid = r["conversation"]["id"]
+        try:
+            choice = next((k for k in r.get("cards", []) if k.get("type") == "choice"), None)
+            if choice:  # the chef picks the first option offered
+                agent.action(cid, "pick", choice["options"][0]["payload"])
+            agent.action(cid, "order")
+        except PlaybookError:
+            pass  # can't do, or a choice is open: it stays as the chef left it
+    r = agent.message(None, DEMO_GALA, "BUY-POHJOLA")
+    agent.action(r["conversation"]["id"], "order")
+
+
 def make_app(live: bool = True) -> Starlette:
     state = {}
 
@@ -76,8 +97,7 @@ def make_app(live: bool = True) -> Starlette:
         state["agent"] = ChefAssistant(state["gw"])
         state["analyst"] = Analyst(state["gw"])
         if os.environ.get("AIMO_SEED_DEMO", "1") == "1" and not state["gw"].restored:  # the app opens on the gala example, already ordered
-            r = state["agent"].message(None, DEMO_GALA, "BUY-POHJOLA")
-            state["agent"].action(r["conversation"]["id"], "order")
+            seed_demo(state["agent"])
 
     boot()
     gw = lambda: state["gw"]  # noqa: E731

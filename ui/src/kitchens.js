@@ -60,10 +60,48 @@ function view() {
     </div>
     <section class="section"><h2>Appearance</h2><div class="seg-ctl" role="group" aria-label="Theme">${['system', 'light', 'dark'].map((t) => `<button data-theme-set="${t}" aria-pressed="${theme === t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div></section>
     <section class="section"><h2>How it works</h2><p class="muted">Every assistant, ours or any other, follows the same steps, checked by the gateway: understand, recall your favourites first, look further only for gaps, plan, check your rules, show cards, order, learn. Questions about your data follow a second set: describe, ask, choose a chart, explain.</p>
-      ${S.mode === 'live' ? `<div class="acts"><button class="btn" data-reset>${ic('chat')} Start the demo again</button></div>` : ''}</section></div>`;
+      ${S.mode === 'live' ? `<div class="acts"><button class="btn" data-reset>${ic('chat')} Start the demo again</button><button class="btn" data-opsview>${ic('insights')} Valio Aimo view</button></div>
+      <p class="muted small">Demo switch: what Valio Aimo sees across customers, never one customer alone.</p>` : ''}</section></div>`;
 }
 
-function after() {}
+// ---------------------------------------------------------------- Valio Aimo view (operations, demo switch)
+const pct = (v) => (v == null ? '–' : Math.round(v) + '%');
+const secs = (v) => (v == null ? '–' : v < 90 ? Math.round(v) + ' s' : Math.round(v / 60) + ' min');
+
+async function openOps() {
+  const { API, openPanel } = A();
+  openPanel('ops', 'Valio Aimo view', '<p class="muted">Loading…</p>');
+  try {
+    const [m, d, l] = await Promise.all([API.ops('metrics'), API.ops('demand?by=day'), API.ops('lost-sales')]);
+    K.ops = { m, d, l };
+  } catch (e) { K.ops = { error: e.message }; }
+  openPanel('ops', 'Valio Aimo view', opsHtml());
+  after();
+}
+
+function opsHtml() {
+  const { esc } = A();
+  const o = K.ops || {};
+  if (o.error) return `<p class="muted">${esc(o.error)}</p>`;
+  const c = o.m.channel;
+  const k = o.m.kAnonymity;
+  const tiles = c ? [['Ordered without a human', pct(c.autonomous_rate)], ['Needed an OK', pct(c.approval_rate)], ['Fill rate', pct(c.fill_rate)],
+    ['Re-quoted', pct(c.requote_rate)], ['Approval wait (90%)', secs(c.p90_approval_wait)], ['Agent sessions', c.sessions]] : [];
+  const lost = o.l.rows.length ? `<div class="list">${o.l.rows.map((r) => `<div class="li"><span>${esc(r.why)}<small>${r.lines} ${r.lines === 1 ? 'need' : 'needs'}</small></span><b class="num">${Math.round(r.unmet_qty)} units</b></div>`).join('')}</div>`
+    : `<p class="muted">Nothing to show yet: each reason needs at least ${k} customers.${o.l.suppressed ? ` ${o.l.suppressed} hidden.` : ''}</p>`;
+  return `<p class="muted">Agents say what they need before they order: a date, an amount, a diet. Across customers, grouped so that no group shows fewer than ${k} customers.</p>
+    <h3 class="day-h">Agent channel</h3>
+    ${c ? `<div class="site-kpis ops-kpis">${tiles.map(([t, v]) => `<span><b class="num">${esc(v)}</b><small>${esc(t)}</small></span>`).join('')}</div>` : `<p class="muted">${esc(o.m.note || '')}</p>`}
+    <h3 class="day-h">Planned need, by delivery day</h3>
+    ${o.d.chart ? '<div id="ops-demand" class="ex-chart short"></div>' : `<p class="muted">Nothing to show yet (fewer than ${k} customers per day).</p>`}
+    ${o.d.suppressed ? `<p class="muted small">${o.d.suppressed} ${o.d.suppressed === 1 ? 'day has' : 'days have'} fewer than ${k} customers, so ${o.d.suppressed === 1 ? 'it is' : 'they are'} hidden.</p>` : ''}
+    <h3 class="day-h">What agents could not get</h3>${lost}`;
+}
+
+function after() {
+  const { S } = A();
+  if (S.panel && S.panel.kind === 'ops' && K.ops && K.ops.d && K.ops.d.chart) window.AimoInsights.draw(document.getElementById('ops-demand'), K.ops.d.chart);
+}
 
 function openSite(id) {
   const { esc, openPanel, ic } = A();
@@ -82,6 +120,7 @@ function openSite(id) {
 }
 
 async function click(t, d) {
+  if (d.opsview !== undefined) { await openOps(); return true; }
   if (d.ksite) { K.tab = 'overview'; K.open = d.ksite; openSite(d.ksite); return true; }
   if (d.ktab) { K.tab = d.ktab; openSite(d.kid); return true; }
   if (d.kgo) {

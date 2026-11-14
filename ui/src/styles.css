@@ -394,6 +394,8 @@ button.li::after, .ibtn::after, .new-chat::after, .recent button::after, .th::af
 .site-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .site-kpis span { display: grid; } .site-kpis b { font-size: 19px; font-weight: 700; } .site-kpis small { color: var(--muted); font-size: 12px; }
 .site-kpis.big b { font-size: 26px; }
+.ops-kpis { row-gap: 16px; margin-bottom: 8px; }
+.ex-chart.short { min-height: 210px; }
 .site-foot { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; } .site-foot svg { width: 16px; height: 16px; }
 .spark { display: block; max-width: 100%; height: auto; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 18px; }

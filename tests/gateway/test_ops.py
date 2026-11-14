@@ -81,3 +81,24 @@ def test_ops_mcp_mode_has_only_ops_tools():
     assert names == {"ops_metrics", "ops_demand", "ops_lost_sales"}
     assert json.loads(fns["ops_demand"](by="day"))["kAnonymity"] == 3
     assert json.loads(fns["ops_demand"](by="buyer"))["status"] == 422
+
+
+def test_seeded_demo_has_enough_customers_for_the_operations_view(monkeypatch):
+    monkeypatch.setenv("AIMO_SEED_DEMO", "1")
+    c = TestClient(make_app(live=False))
+    m = c.get("/v1/ops/metrics", headers=OPS).json()
+    assert m["channel"] and m["channel"]["sessions"] >= 4
+    d = c.get("/v1/ops/demand?by=day", headers=OPS).json()
+    assert d["rows"] and d["chart"]
+    chats = c.get("/v1/chats", headers={"Authorization": "Bearer demo-user-buy-pohjola"}).json()["chats"]
+    assert chats and "Gala" in chats[-1]["title"] or any("Gala" in x["title"] for x in chats)  # the app still opens on the gala
+
+
+def test_demand_chart_uses_thin_bars_and_day_labels(monkeypatch):
+    monkeypatch.setenv("AIMO_SEED_DEMO", "1")
+    c = TestClient(make_app(live=False))
+    ch = c.get("/v1/ops/demand?by=day", headers=OPS).json()["chart"]
+    assert ch["mark"]["type"] == "bar" and ch["mark"]["size"] <= 24 and ch["mark"]["cornerRadiusEnd"] == 4
+    assert ch["encoding"]["x"]["field"] == "day" and ch["encoding"]["x"]["type"] == "ordinal"
+    assert ch["data"]["values"][0]["day"] == "Mon 16.11."
+    assert {t["field"] for t in ch["encoding"]["tooltip"]} >= {"planned_qty", "ordered_qty", "unmet_qty"}
