@@ -45,8 +45,17 @@ class ChefAssistant:
         return self.E.sessions.get(c["sessionIds"][-1]) if c["sessionIds"] else None
 
     def _order(self, s):
-        """Place the order, citing the signed offers the checked basket stands on."""
+        """Place the order, citing the signed offers the checked basket stands on. If an offer expired or stock
+        changed meanwhile, re-quote once (plan -> check -> present) and order if the gateway still allows it."""
+        from .engine import StepNotAllowed
         from .tools import offer_ids
+        try:
+            return self._call(s, "place_order", {"offerIds": offer_ids(s)})
+        except StepNotAllowed as e:
+            if e.extra.get("guard") not in ("price_locked", "stock_changed"):
+                raise
+        for t in ("plan_basket", "check_basket", "render_cards"):
+            self._call(s, t)
         return self._call(s, "place_order", {"offerIds": offer_ids(s)})
 
     def _call(self, s, tool, args=None):

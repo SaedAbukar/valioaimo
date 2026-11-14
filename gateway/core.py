@@ -7,6 +7,7 @@ same methods; this skeleton keeps them in-process for tests and the CLI.
 from __future__ import annotations
 
 import copy
+import os
 import threading
 from datetime import timedelta
 from pathlib import Path
@@ -22,7 +23,8 @@ from .util import iso, new_id, s2d
 
 class Gateway:
     def __init__(self, db: str = ":memory:", clock: Clock | None = None, live: bool = False, keys_dir: str | Path | None = None):
-        self.clock = clock or Clock(frozen=True)
+        # the server's clock ticks (offers expire, idempotency TTL, offer.expiring); tests freeze it (AIMO_CLOCK_FROZEN=1)
+        self.clock = clock or Clock(frozen=os.environ.get("AIMO_CLOCK_FROZEN") == "1")
         self.lock = threading.RLock()  # order placement: verify -> reserve -> place is atomic (no overselling)
         self.store = Store(db)
         self.backend = FixtureBackend(self.clock)
@@ -131,4 +133,6 @@ class Gateway:
                "profile": self.profiles[bid], "signals": signals if signals is not None else sig.compute(buyer, self.records),
                "agentId": buyer["agents"][0]["id"]}
         ctx.update(extra)
+        if self.kill_switch.get(ctx["agentId"]):  # V3: Valio Aimo operations paused this agent
+            ctx["killSwitch"] = {"on": True, "by": "Valio Aimo operations"}
         return policy.evaluate(ctx)

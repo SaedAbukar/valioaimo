@@ -170,13 +170,20 @@ class Engine:
             ready = d.get("plan") and not d["plan"].get("pendingChoices") and not d["plan"].get("cantDo")
             if ready and dec in ("auto", "tell_me"):
                 out.append("place_order")
-            if ready and dec == "needs_ok":
+            appr = d.get("approval") or {}
+            covered = appr.get("status") == "approved" and not appr.get("used") and \
+                d["plan"]["total"] <= appr.get("total", 0) + 0.005  # a re-quote at the same or lower total keeps the OK
+            if ready and dec == "needs_ok" and covered:
+                out.append("place_order")
+            elif ready and dec == "needs_ok":
                 out.append("request_approval")
             out += ["plan_basket", "parse_request"]
         elif step == "act":
             appr = d.get("approval")
             if appr and appr["status"] == "approved" and not appr.get("used"):
                 out.append("place_order")
+            if not d.get("order"):  # an expired or changed offer before ordering: re-quote
+                out.append("plan_basket")
             out += ["record_usage", "get_tips", "parse_request"]
         elif step == "learn":
             out = ["record_usage", "get_tips", "parse_request"]
@@ -210,6 +217,10 @@ class Engine:
         if tool not in pb["toolStep"]:
             raise NotFound(f"unknown tool {tool}", known=sorted(pb["toolStep"]),
                            next_allowed_tools=self.allowed(s), fix={"tools": "GET /v1/playbook lists every tool and its input"})
+        if s and self.gw.kill_switch.get(s["agentId"]):  # checked on every call, not only at start_session
+            raise GuardFailed("This agent is paused by Valio Aimo operations; nothing more can run in this session.",
+                              guard="agent_paused", next_allowed_tools=["get_session"],
+                              fix={"contact": "Valio Aimo operations", "why": "kill switch (rule V3)"})
         allowed = self.allowed(s)
         if tool not in allowed:
             raise StepNotAllowed(f"'{tool}' is not allowed at step '{s['step'] if s else 'none'}'.",

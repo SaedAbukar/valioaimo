@@ -314,3 +314,58 @@ def test_rate_limiter_refills():
     assert rl.check("a") is None and rl.check("a") is None and rl.check("a") == pytest.approx(1.0)
     t[0] = 1.0
     assert rl.check("a") is None
+
+
+# ---------------------------------------------------------------- Task 16: ticking clock, kill switch on every call
+def test_server_clock_ticks_so_offers_expire(monkeypatch):
+    import gateway.clock as clk
+    monkeypatch.delenv("AIMO_CLOCK_FROZEN", raising=False)
+    t = [1000.0]
+    monkeypatch.setattr(clk.time, "monotonic", lambda: t[0])
+    gw = Gateway()
+    assert not gw.clock.frozen
+    sid, s = in_process_to_present(gw)
+    t[0] += 16 * 60  # sixteen real minutes later
+    with pytest.raises(StepNotAllowed) as e:
+        gw.engine.call(sid, "place_order", {"offerIds": offer_ids(s)})
+    assert e.value.extra["guard"] == "price_locked" and "expired" in str(e.value)
+
+
+def test_paused_agent_is_blocked_mid_session():
+    from gateway.playbook.engine import GuardFailed
+    gw = Gateway()
+    sid, s = in_process_to_present(gw)
+    gw.kill_switch[s["agentId"]] = True
+    with pytest.raises(GuardFailed) as e:
+        gw.engine.call(sid, "place_order", {"offerIds": offer_ids(s)})
+    assert e.value.extra["guard"] == "agent_paused" and e.value.extra["fix"]
+    assert not gw.backend.orders
+    assert gw.engine.call(sid, "get_session")["output"]["step"] == "present"  # reading is still fine
+    pol = gw.evaluate(s["buyerId"], s["data"]["plan"]["lines"], s["data"]["plan"]["requestLines"])
+    assert pol["outcome"] == "BLOCK" and "V3" in pol["ruleIds"]
+
+
+def test_requote_after_expiry_keeps_an_approval_for_the_same_or_lower_total():
+    from gateway.playbook.tools import decide_approval
+    gw = Gateway()
+    sid, s = in_process_to_present(gw, BRIEF.replace("1,000", "3,000"))
+    gw.engine.call(sid, "request_approval")
+    decide_approval(gw, s, True, {"id": "usr-lvirtanen", "name": "Laura Virtanen"})
+    gw.clock.advance(16)
+    with pytest.raises(StepNotAllowed):
+        gw.engine.call(sid, "place_order", {"offerIds": offer_ids(s)})
+    for t in ("plan_basket", "check_basket", "render_cards"):
+        r = gw.engine.call(sid, t)
+    assert "place_order" in r["next_allowed_tools"]  # same total: Laura's OK still covers it
+    o = gw.engine.call(sid, "place_order", {"offerIds": offer_ids(s)})["output"]
+    assert o["approvedBy"] == "Laura Virtanen"
+
+
+def test_chef_assistant_requotes_an_expired_offer_instead_of_failing():
+    from gateway.playbook.agent import ChefAssistant
+    gw = Gateway()
+    a = ChefAssistant(gw)
+    r = a.message(None, "I need 1,000 L lactose-free milk by Monday", "BUY-POHJOLA")
+    gw.clock.advance(16)
+    out = a.action(r["conversation"]["id"], "order")
+    assert out["cards"][0]["type"] == "delivery" and len(gw.backend.orders) == 1
