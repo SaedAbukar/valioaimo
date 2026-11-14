@@ -104,4 +104,4 @@ builds the same tool calls. Both are shown step by step under "How I made this".
 | Version | Date | Change |
 |---|---|---|
 | insight 1.0.0 | 2026-11-14 | First version: six steps, 13 measures, 11 dimensions, 17 chart types, recipes for small models. |
-| insight 1.1.0 | 2026-11-14 | `inputs:` — a JSON Schema per tool (same validation and `fix` as the order playbook); MCP insight tools are typed. |
+| insight 1.1.0 | 2026-11-14 | `inputs:` — a JSON Schema per tool (same validation and `fix` as the order playbook); MCP insight tools are typed. Datasets `agent_activity` and `demand` next to `orders` (`describe_data {dataset}`, `run_query {dataset}`); calcs `forecast` (horizon 1–6, `is_forecast` rows with `lo`/`hi`) and `anomaly` (`is_anomaly`, robust z); new tool `explain_change {measure, period_a, period_b, by}` (top 5 + Other, contributions sum to the change); two recipes for the new datasets. |

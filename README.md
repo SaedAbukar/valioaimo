@@ -25,9 +25,10 @@ The full audit is in **[docs/CHALLENGE_CHECKLIST.md](docs/CHALLENGE_CHECKLIST.md
 make setup      # .venv + requirements (Python 3.11+)
 make index      # builds gateway/data/aimo_products.json from the organisers' data in data_raw/ (not in git)
 make run        # gateway + chef app on http://127.0.0.1:8000
-make agent      # an external agent places the brief's order (scripts/agent_demo.py)
-make test       # 135 tests (+1 live test: AIMO_LIVE_TESTS=1)
-make mcp        # the same gateway over MCP (stdio), as AIMO_AGENT_TOKEN's agent
+make agent      # an external agent places the brief's order (scripts/agent_demo.py; --suggestions for the seller agent)
+make bench      # 10 agents at once, every scenario, invariants checked from the gateway's records -> docs/BENCH.md
+make test       # 279 tests (+1 live test: AIMO_LIVE_TESTS=1)
+make mcp        # MCP over stdio for AIMO_AGENT_TOKEN's agent, proxied to the running gateway's /mcp
 ```
 
 Put the Valio Aimo mock API in `.env` (git-ignored, never committed):
@@ -94,7 +95,15 @@ python scripts/agent_demo.py --over-limit
 | Insights | The kitchen's year |
 | Kitchens | The CRM-style view |
 
-**Same thing over MCP.** Add `python -m gateway.mcp_server` to Claude Desktop or Claude Code and ask for the milk order. The tools are `lookup_products`, the playbook tools, `get_order` and the others; there is no approve tool.
+**Same thing over MCP.** Point an MCP client at `http://127.0.0.1:8000/mcp` (Streamable HTTP, `Authorization: Bearer demo-key-pohjola`), or add `AIMO_GATEWAY_URL=http://127.0.0.1:8000 python -m gateway.mcp_server` to Claude Desktop or Claude Code (stdio), and ask for the milk order. It is the same gateway, so Laura's approval in the REST inbox wakes the MCP agent (`wait_for_update`). The tools are typed from the playbook schemas; there is no approve tool.
+
+**If there is time (optional).**
+
+| Command or screen | What it shows |
+|---|---|
+| `python scripts/agent_demo.py --suggestions` | Valio Aimo's seller agent: three signed, clearly promotional suggestions (Christmas, a lower-CO2 milk), each verified by the buyer's agent; nothing is added to an order |
+| `make bench` | 10 agents at once on the same stock: no oversell, no double order, every invariant holds ([BENCH.md](docs/BENCH.md)) |
+| Kitchens › Valio Aimo view | What Valio Aimo learns from the agent channel: autonomous rate, fill rate, planned need per day across customers (k ≥ 3) |
 
 ## What is in here
 
@@ -107,7 +116,11 @@ python scripts/agent_demo.py --over-limit
 | Offers, orders, approvals | [`gateway/trust.py`](gateway/trust.py) (VC 2.0 + ES256, six checks), [`gateway/playbook/tools.py`](gateway/playbook/tools.py) (`place_order`, `request_approval`, `decide_approval`) |
 | Rules | [`gateway/rules.yaml`](gateway/rules.yaml), [`gateway/policy.py`](gateway/policy.py) |
 | Audit | [`gateway/audit.py`](gateway/audit.py) (hash chain) |
-| MCP | [`gateway/mcp_server.py`](gateway/mcp_server.py) |
+| MCP | [`gateway/mcp_app.py`](gateway/mcp_app.py) (Streamable HTTP at `/mcp`, typed tools from [`mcp_tools.py`](gateway/mcp_tools.py)), [`gateway/mcp_server.py`](gateway/mcp_server.py) (stdio) |
+| Hardening | [`events.py`](gateway/events.py) (push), [`persist.py`](gateway/persist.py) (restart), [`ratelimit.py`](gateway/ratelimit.py), [`observability.py`](gateway/observability.py), [`authz.py`](gateway/authz.py) |
+| Valio Aimo seller agent | [`gateway/seller.py`](gateway/seller.py) · [docs/EXPOSURE.md](docs/EXPOSURE.md#the-valio-aimo-seller-agent-what-it-may-use-and-what-it-may-never-do) |
+| Operations view | [`gateway/ops.py`](gateway/ops.py), [`gateway/analytics/datasets.py`](gateway/analytics/datasets.py); in the app: Kitchens › Valio Aimo view |
+| Multi-agent benchmark | [`scripts/agent_bench.py`](scripts/agent_bench.py) · [docs/BENCH.md](docs/BENCH.md) |
 | External agent example | [`scripts/agent_demo.py`](scripts/agent_demo.py) |
 | Chef app (example client) | `ui/src/` → `ui/dist/index.html` · [docs/UX.md](docs/UX.md) |
 | Insight playbook (questions → charts) | [`gateway/analytics/`](gateway/analytics/) · [docs/PLAYBOOK.md](docs/PLAYBOOK.md#the-insight-playbook-questions--charts) |

@@ -231,4 +231,29 @@ flowchart LR
   ad -->|X-API-Key, never exposed| mock[(Valio Aimo mock API<br/>/api/price · /api/availability)]
 ```
 
-Commitment path: `plan_basket` issues signed offers (15 min) → `check_basket` (gateway) → `place_order {offerIds}` or `request_approval` → named human's inbox → `POST /v1/approvals/{id}` (human only) → `place_order {offerIds}` → signed `order+jwt` confirmation. Checklist: [CHALLENGE_CHECKLIST.md](CHALLENGE_CHECKLIST.md); exposure: [EXPOSURE.md](EXPOSURE.md).
+Commitment path (v4): `plan_basket` issues signed offers (15 min) → `check_basket` (gateway) → `place_order {offerIds}` or `request_approval` → named human's inbox → `POST /v1/approvals/{id}` (human only) → `place_order {offerIds}` → signed `order+jwt` confirmation. Checklist: [CHALLENGE_CHECKLIST.md](CHALLENGE_CHECKLIST.md); exposure: [EXPOSURE.md](EXPOSURE.md).
+
+## 11. v5: many agents at once, the seller agent and the operations view
+
+```mermaid
+flowchart LR
+  ext[External agents<br/>REST · MCP /mcp · chat] -->|Bearer token| edge
+  subgraph Gateway[One gateway process]
+    edge[RequestLog · rate limit · auth/authz<br/>traceparent, JSON logs] --> eng[Playbook engine<br/>input schemas · idempotency · per-session lock<br/>atomic steps · kill switch · rejections audited]
+    eng --> res[reserve stock under gw.lock<br/>409 stock_changed]
+    eng --> ev[events.py<br/>long-poll per session]
+    eng --> per[(persist.py<br/>SQLite: sessions, orders, inbox, stock, events, keys)]
+    seller[seller.py<br/>Valio Aimo seller agent] -->|suggestion+jwt| ev
+    ds[analytics/datasets.py<br/>agent_activity · demand] --> ops[ops.py<br/>metrics · forward demand · lost sales, k ≥ 3]
+    eng --> ds
+  end
+  eng --> ad[adapter.py<br/>retry · circuit breaker · deadline]
+  ad --> mock[(Valio Aimo mock API)]
+  bench[scripts/agent_bench.py<br/>N agents, invariants] -->|REST| edge
+```
+
+- **Order time is the moment of truth.** `place_order` re-verifies every offer with the planned quantity and reserves the stock atomically; a loser gets `409 stock_changed` and re-quotes. Retries with an `Idempotency-Key` return the first order.
+- **Agents are told, not polled.** Every step, decision, approval, order, expiring offer and seller suggestion is a session event; `GET /v1/sessions/{id}/events?wait=25` or MCP `wait_for_update` wakes the agent.
+- **The seller is another agent with less power.** It writes signed, promotional suggestions into the buyer's event stream; only the buyer's agent can use one, and only through `plan_basket` → `check_basket`.
+- **Valio Aimo learns from the channel.** Sessions and plans become the `agent_activity` and `demand` datasets: buyers query their own rows through the insight rails; operations see cross-customer aggregates with k ≥ 3.
+- **Proof.** `make bench` runs N agents at once over REST and checks no oversell, one order per key, verified offers, authority, named approvers and the audit chain from the gateway's own records ([BENCH.md](BENCH.md)).

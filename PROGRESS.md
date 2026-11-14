@@ -1,5 +1,16 @@
 # Progress — Aimo Agent Gateway
 
+## v5 — hardening, seller agent, analytics, operations view (14 Nov 2026)
+Plan: docs/superpowers/plans/2026-11-14-v5-gateway-hardening-seller-ops.md (Tasks 1–21). Rulings: docs/ASSUMPTIONS.md (v5).
+- Hardening (1–6): stock re-checked and reserved at order time (409 `stock_changed`); `Idempotency-Key`; a JSON Schema per tool (playbooks 1.1.0, typed MCP tools, 422 `bad_input` with an example); session events + long-poll; SQLite persistence with stable keys; rate limits (429 + `Retry-After`).
+- Audit findings (14–21): one gateway for REST and MCP (Streamable HTTP `/mcp`, stdio proxy); chef-app routes and chat approvals need credentials, demo tokens only in demo mode; ticking clock, kill switch on every call; per-session lock, atomic steps; resilient adapter (retry, breaker, deadline, worker threads); rejected calls audited, JSON logs with `traceparent`, ops metrics; input validated everywhere, bounded long-poll, eviction, incremental audit verify; `authz.py`, `Backend` protocol, approvals module, MCP `isError`.
+- Seller agent (12): `gateway/seller.py`, signed `suggestion+jwt`, ≤ 3 per buyer, mandate-safe, accepted only through `plan_basket` → `check_basket`; REST, MCP, A2A skill, event; `agent_demo.py --suggestions`.
+- Bench (7): `scripts/agent_bench.py`, `make bench` → docs/BENCH.md. Live against the mock API: 100 % completion, every invariant holds, determinism 100 %. Found and fixed two oversell bugs (weekly restock, re-registered live stock).
+- Analytics (8–10): insight rails authenticated; datasets `agent_activity` and `demand`; `forecast`, `anomaly`, `explain_change`; forecast drawn dashed with a band, a running month as a hollow dot.
+- Operations view (11): `/v1/ops/metrics`, `/demand`, `/lost-sales` (k ≥ 3), ops MCP mode, Kitchens › Valio Aimo view; demo seed with four kitchens.
+- Tests: 279 passed + 1 opt-in live test (passed). Live: `make agent` (both flows on live prices), `--suggestions`, `make bench` all pass.
+- Not built: chef-app "From Valio Aimo" suggestion card; LLM bench rows (no Anthropic key on this machine).
+
 ## v4 — challenge audit (14 Nov 2026)
 - Audited against docs/CHALLENGE_BRIEF.md and the planning-session checklist → **docs/CHALLENGE_CHECKLIST.md** (core 1–4, underlying 5–8, optional 9–11 all PASS; scenarios: 3 PASS, 2 PARTIAL, proactive seller agent not built).
 - New: OpenAPI 3.1 (`/openapi.json`), `/.well-known/ucp`, signed `/.well-known/agent-card.json`, structured lookup (`/v1/products/search`, `/price-availability`) through the mock API, bearer credentials bound to one buyer (`gateway/auth.py`), approver inbox + human-only approvals, orders that must cite offer ids, no-negotiation guard, signed order confirmations, `/v1/mandate`, `/v1/offers/{id}[/verify]`, `/v1/orders/{id}`, plain session log, ops kill switch, pack labels in lookup, live pricing for recalled favourites.

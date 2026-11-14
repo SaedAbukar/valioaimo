@@ -2,12 +2,12 @@
 
 The product being judged is the **agent-facing gateway** and its rules. The chef chat app is one example client of that gateway; the brief says this is "not about replacing the webshop with a chatbot".
 
-Status as of 14 Nov 2026. Every PASS is proven by a test (`make test`) or a demo command. Every check here holds over all three interfaces:
+Status as of 14 Nov 2026 (v5). Every PASS is proven by a test (`make test`) or a demo command. Every check here holds over all three interfaces:
 
 | Interface | How an agent uses it |
 |---|---|
 | REST | OpenAPI 3.1 at `/openapi.json` |
-| MCP | `make mcp`, 40 tools |
+| MCP | Streamable HTTP at `/mcp` on the same gateway (Bearer agent token), or `make mcp` (stdio proxy to it); 44 typed tools generated from the playbook input schemas |
 | Tool calls | the playbook tools through `POST /v1/sessions/{id}/tools/{tool}` |
 
 **Demo commands used below**
@@ -17,6 +17,8 @@ Status as of 14 Nov 2026. Every PASS is proven by a test (`make test`) or a demo
 | A | `python scripts/agent_demo.py` (the brief's milk request, ends in an order) |
 | B | `python scripts/agent_demo.py --over-limit` (3,000 L, ends in an approval) |
 | L | `AIMO_LIVE_TESTS=1 pytest tests/gateway/test_live_e2e.py` (the same flow on the real mock API) |
+| C | `python scripts/agent_demo.py --suggestions` (the buyer's agent pulls and verifies Valio Aimo's seller suggestions) |
+| D | `make bench` with `make run` up (10 agents at once, all scenarios, invariants from the gateway's records → docs/BENCH.md) |
 
 All tests named below live in `tests/gateway/test_challenge.py` unless another file is given. "MCP parity" means `tests/gateway/test_mcp_parity.py`.
 
@@ -28,7 +30,8 @@ All tests named below live in `tests/gateway/test_challenge.py` unless another f
 | Underlying requirements (5–8) | 4 | – | – |
 | Optional (9–11) | 3 | – | – |
 | Organiser insights (4) | 4 | – | – |
-| Example scenarios (6) | 3 | 2 | 1 |
+| Robustness (v5, 10) | 10 | – | – |
+| Example scenarios (6) | 4 | 2 | – |
 | Judging criteria (5) | 5 | – | – |
 | Deliverables | 5 | – | – |
 
@@ -142,6 +145,21 @@ The request is the brief's own: *"I need 1,000 litres of lactose-free milk by Mo
 | Response logic for partial availability and good-better-best substitution | **PASS** | Ranking tags in lookup, recall fallbacks and substitution tolerance rules (items 9–10) |
 | Audit trail for buyer and Valio Aimo | **PASS** | Item 11; tamper-evident chain |
 
+## Robustness (v5: many agents at once, in production conditions)
+
+| # | Item | Status | Where | Proof |
+|---|---|---|---|---|
+| R1 | No overselling: stock re-checked and reserved when the order is placed | **PASS** | `_lock_prices` + `FixtureBackend.reserve` under `gw.lock`; 409 `stock_changed` → re-quote; restock and re-registered live stock deplete | `tests/gateway/test_hardening.py::test_concurrent_orders_never_oversell`, `…restock…`, `…re_registering…`; demo D |
+| R2 | No double orders: `Idempotency-Key` (header or `idempotencyKey`) | **PASS** | `Engine.idempotent`: same key + body → stored response, `Idempotent-Replay: true`; other body → 422 | `test_retried_place_order_returns_same_order`, `test_same_key_different_body_is_422`, `test_approval_decision_is_idempotent` |
+| R3 | Typed tools: a JSON Schema per tool, 422 `bad_input` with `fix.expected` + `fix.example` | **PASS** | playbooks 1.1.0 `inputs:`; MCP tools generated from them | `test_every_tool_has_an_input_schema`, `test_bad_input_has_a_fix_with_an_example`, `test_mcp_order_tools_are_typed` |
+| R4 | Push, not polling: session events and long-poll | **PASS** | `GET /v1/sessions/{id}/events?after=&wait=`, MCP `wait_for_update` | `test_agent_is_woken_by_approval`, `tests/gateway/test_mcp_http.py` |
+| R5 | State survives a restart; old confirmations still verify | **PASS** | `gateway/persist.py`, keys in `data/keys` | `test_restart_keeps_pending_approval_and_keys` |
+| R6 | Rate limits per credential (429 + `Retry-After`) | **PASS** | `gateway/ratelimit.py` | `test_burst_over_limit_is_429_with_retry_after` |
+| R7 | One gateway for REST and MCP; locked-down chef-app routes; demo tokens only in demo mode | **PASS** | `/mcp` (Streamable HTTP), `gateway/auth.py`, `gateway/authz.py` | `tests/gateway/test_mcp_http.py`, `tests/gateway/test_lockdown.py` |
+| R8 | Clock ticks, kill switch on every call, atomic steps, per-session lock | **PASS** | `core.py`, `playbook/engine.py` | `test_server_clock_ticks_so_offers_expire`, `test_paused_agent_is_blocked_mid_session`, `test_failed_step_leaves_the_session_unchanged` |
+| R9 | Resilient mock-API adapter: retry with jitter, circuit breaker, deadline, work off the event loop | **PASS** | `gateway/adapter.py`, `off_loop` in `__main__.py` | `tests/gateway/test_adapter_resilience.py` |
+| R10 | Observability: rejected calls audited, JSON logs with `traceparent`, ops metrics; multi-agent benchmark | **PASS** | `gateway/observability.py`, `/v1/ops/metrics`, `scripts/agent_bench.py` | `tests/gateway/test_observability.py`, `tests/gateway/test_bench.py`; demo D (live: 100 % completion, every invariant holds) |
+
 ## Example scenarios
 
 | Scenario | Status | Where |
@@ -149,7 +167,7 @@ The request is the brief's own: *"I need 1,000 litres of lactose-free milk by Mo
 | Need → recipe → order | **PARTIAL** | The chef names the dishes; the gateway turns them into ingredients and quantities (`recipes.json`, learned use per guest), uses leftovers first, then orders (golden s2). Suggesting recipes around a seasonal ingredient is not built. |
 | Last-minute event | **PARTIAL** | R7 flags anything that arrives after the need-by date, and the menu logic warns about dishes it can't source. A "tomorrow" booking is not one of the golden scenarios. |
 | Supplier stock-out | **PASS** (reactive) | s1 covers the gap with the past good substitute and explains it; R4/R5 apply. There is no background monitor that warns before the kitchen notices. |
-| Proactive selling agent (Valio Aimo's own agent) | **Not built** | The agent card publishes the seller side; proactive suggestions are on the [roadmap](ROADMAP.md). |
+| Proactive selling agent (Valio Aimo's own agent) | **PASS** | `gateway/seller.py`: at most 3 signed (`suggestion+jwt`), clearly promotional suggestions per buyer: seasonal, new but similar, better on the buyer's own criteria (CO2e, Hyvää Suomesta, delivery reliability), priced through the adapter. Never outside the signed mandate, never added to a basket: `plan_basket {acceptSuggestion}` re-plans and must pass `check_basket` (first-time product → R8). REST `GET /v1/suggestions`, `POST /v1/suggestions/{id}/feedback`; MCP `get_suggestions`, `suggestion_feedback`; A2A skill `proactive-offers`; event `suggestion.created`; audited as `agent:valio-aimo-seller`. Proof: `tests/gateway/test_seller.py`; demo C. |
 | Allergen-safe substitution under pressure | **PASS** | s4 (school): "Can't do this" with a safe alternative; R1 blocks; `tests/test_core.py::test_hospital_allergen_safe_substitution` |
 | Standing-order drift detection | **PASS** | R10 pauses auto-renew when quantity drifts more than 20 % from the 8-week median (`tests/test_core.py::test_policy_rules`, case `drift`) |
 
@@ -160,7 +178,7 @@ The request is the brief's own: *"I need 1,000 litres of lactose-free milk by Mo
 | Working end-to-end demo (30 %) | Demos A, B and L; `test_4`; the chef app as one client |
 | Solving the problem and user need (20 %) | Recall first (favourites, past good orders), the brief's sentence parsed, one question at most, golden scenarios |
 | Autonomy and controls (20 %) | Items 3, 7 and 8, `/v1/rules`, kill switch, hash-chained audit |
-| Robustness to exceptions (15 %) | Partial cover, substitutes, allergen block, late delivery, expired or changed price means re-quote, wrong offer ids, out-of-order calls |
+| Robustness to exceptions (15 %) | Partial cover, substitutes, allergen block, late delivery, expired or changed price or stock means re-quote, wrong offer ids, out-of-order calls, retries, restarts, rate limits, a failing mock API; the Robustness section and `make bench` |
 | Openness and path to production (15 %) | OpenAPI 3.1, MCP, `.well-known` documents, JWS/VC, docs/STANDARDS.md, docs/EXPOSURE.md, docs/ASSUMPTIONS.md, docs/ROADMAP.md |
 
 ## Deliverables

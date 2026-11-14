@@ -45,4 +45,23 @@
 - **The mock API has no order endpoint.** Orders are confirmed by the gateway's order book (`FixtureBackend.place_order`, reference `AIMO-SO-…`) and signed by the gateway; in production this is the ERP/webshop order API behind the adapter.
 - **Labels.** Pack labels come from GS1 `packagingMarkedLabel` (temperature marks dropped) and are shown as certificates; their validity is not in the data, so they are treated as valid.
 - **Organiser data stays out of git.** `gateway/data/aimo_products.json` is git-ignored (Junction-only data in a public repo); `make index` rebuilds it from `data_raw/`.
-- **Keys are per process.** The JWKS changes on restart or demo reset; agents fetch it per run.
+- **Keys are per process.** The JWKS changes on restart or demo reset; agents fetch it per run. *(v5: keys persist in `data/keys` with `make run`.)*
+
+## v5 (14 Nov 2026): hardening, seller agent, analytics, operations view
+
+The full list of rulings with what each costs if wrong is in the v5 plan's ledger; the ones a reader needs:
+
+- **No overselling.** Stock is re-checked and reserved at `place_order` under one gateway lock; quantities taken from future weekly restocks and from re-registered live/bridged products are remembered (two bugs found by the multi-agent benchmark).
+- **Idempotency.** Stored per (scope, key) for 24 h; only successful responses are stored, so a retry after an error runs again. Accepted as a header or a body field (MCP has no headers).
+- **Typed inputs.** Both playbooks are 1.1.0 with a JSON Schema per tool; `place_order` does not require `offerIds` in the schema so the stronger `cite_offers` guard (with the real ids) still answers. OpenAPI uses `anyOf` per tool (several tools take `{}`).
+- **Push.** Long-poll events, no webhooks: outbound calls to agents are out of scope for the prototype. Up to 32 long-polls wait at once (503 + `Retry-After` beyond), with room left in the worker pool.
+- **Restart.** State is saved as JSON documents in SQLite after every state-changing call (`AIMO_DB=data/gateway.db` with `make run`; tests stay in memory). Chat conversations are not persisted.
+- **Credentials.** Demo tokens only in demo mode (`AIMO_DEMO`, default on); otherwise `AIMO_TOKENS_FILE`. A new caller kind `user` for the chef app. Rate limits apply to bearer-authenticated calls.
+- **One gateway for REST and MCP.** MCP is stateless Streamable HTTP at `/mcp`; push is the `wait_for_update` tool. Ops MCP tools exist in stdio mode only.
+- **Clock.** The server's demo clock ticks from 13 Nov 2026 09:00 EET at each boot; tests freeze it. An approved OK still covers a re-quote at the same or lower total.
+- **Adapter.** Sync client in worker threads, not an async rewrite; 2 tries, breaker after 3 failures for 30 s, 3 s deadline; fallbacks are flagged.
+- **Audit.** Every refused call is audited once, by the engine (or by the transport for auth failures). `verify()` is incremental; ops can ask for `full=1`.
+- **Seller agent.** Runs when an agent starts a session and on `GET /v1/suggestions`, at most every 10 gateway-minutes per buyer. Seasonal suggestions add one pack as a new line; the others replace the product of a line the buyer already orders. Opt-out through the signed mandate or the profile. The chef-app "From Valio Aimo" card is not built.
+- **Analytics.** Live datasets are rebuilt per question from sessions, audit and seller state. Cross-customer queries need at least 3 customers in every group and cannot group by customer, kitchen, agent or approver. Forecast = 50/50 same period last year and a 6-period trend, ±1.28σ band; anomaly = robust z against the previous 6 periods with the spread floored at 5 % of the median; a running period is excluded from both.
+- **Benchmark.** Scripted agents hold every invariant, measured from the gateway's own records; under contention "can't do" (sold out) is a correct end. Claude agents use the typed tool schemas through a manual tool-use loop and are skipped without an API key.
+- **Demo seed.** Three other kitchens each make one request for Monday next to the gala, so the operations view has at least 3 customers to show.
