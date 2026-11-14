@@ -1,0 +1,283 @@
+---
+title: "Class diagram · Order process domain model (what is saved per order, and the behaviour around it)"
+---
+classDiagram
+    direction LR
+
+    class PurchaseProcess {
+        +ProcessId id
+        +SiteId site
+        +AgentId agent
+        +ContextType context
+        +Channel channel
+        +Date needBy
+        +ProcessStatus status
+        +Instant createdAt
+        +Instant closedAt
+        +requestLines() List~RequestLine~
+        +chosenPlan() Plan
+        +close(status)
+        +toProcessFact() ProcessFact
+    }
+    class Event {
+        +EventId id
+        +EventType type
+        +ServiceStyle style
+        +Instant startsAt
+        +int expectedGuests
+        +int actualGuests
+        +Map~Diet,int~ dietCounts
+        +Map~Allergen,int~ allergyCounts
+        +dishes() List~EventDish~
+        +rescale(int guests) Delta
+        +report() EventReport
+    }
+    class EventDish {
+        +RecipeId recipe
+        +int plannedPortions
+        +int servedPortions
+    }
+    class RequestLine {
+        +NeedGroupId need
+        +ProductId requestedProduct
+        +Quantity qtyRequested
+        +Quantity qtyFromLeftovers
+        +Percent historyAdjustment
+        +coverage() Ratio
+        +overage() Quantity
+    }
+    class OfferAttestation {
+        +OfferId id
+        +ProductId product
+        +Money unitPrice
+        +int qtyAvailablePacks
+        +Instant availabilityAsOf
+        +Confidence stockConfidence
+        +Date earliestDelivery
+        +Instant validUntil
+        +Jws proof
+        +verify(Jwks) Verification
+        +isFresh(Instant now) bool
+    }
+    class Plan {
+        +PlanLabel label
+        +Strategy strategy
+        +Tier tier
+        +int rank
+        +double totalScore
+        +String tradeoff
+        +lines() List~PlanLine~
+        +scores() List~CriterionScore~
+        +total() Money
+        +whyRanked() Explanation
+    }
+    class PlanLine {
+        +OfferId offer
+        +int qtyCases
+        +Date deliveryDate
+        +String signalNote
+        +qtyBase() Quantity
+    }
+    class CriterionScore {
+        +Criterion criterion
+        +double rawScore
+        +double weight
+        +contribution() double
+    }
+    class PolicyDecision {
+        +Outcome outcome
+        +String policyVersion
+        +Instant evaluatedAt
+        +ruleHits() List~RuleHit~
+        +strictest() Outcome
+    }
+    class RuleHit {
+        +RuleId rule
+        +PlanLineId line
+        +String reason
+    }
+    class Approval {
+        +UserId approver
+        +Instant requestedAt
+        +Instant decidedAt
+        +ApprovalAction action
+        +latency() Duration
+        +approve()
+        +reject(reason)
+        +modify(List~ManualChange~)
+    }
+    class ManualChange {
+        +ChangeKind kind
+        +Field field
+        +String oldValue
+        +String newValue
+    }
+    class ProcessException {
+        +ExceptionType type
+        +OfferId offer
+        +Resolution resolvedBy
+    }
+    class PurchaseOrder {
+        +String aimoOrderRef
+        +Instant placedAt
+        +Hash confirmationHash
+        +lines() List~OrderLine~
+        +value() Money
+    }
+    class OrderLine {
+        +RequestLineId request
+        +OfferId offer
+        +int qtyCases
+        +Date deliveryDate
+        +qtyBase() Quantity
+        +isSubstitute() bool
+    }
+    class DeliveryLine {
+        +Instant deliveredAt
+        +int qtyDeliveredPacks
+        +QualityIssue issue
+        +Date bestBefore
+        +onTime(Date needBy) bool
+        +fillRate() Ratio
+    }
+    class Consumption {
+        +Quantity used
+        +Quantity kept
+        +Quantity redistributed
+        +Quantity wasted
+        +WasteReason reason
+        +Quantity shortage
+        +bool emergencyPurchase
+        +Method method
+        +utilisation() Ratio
+        +wasteValue() Money
+        +validate(Quantity ordered)
+    }
+    class LeftoverLot {
+        +SiteId site
+        +ProductId product
+        +Quantity qty
+        +Date bestBefore
+        +LotStatus status
+        +usableFor(Date needBy) bool
+    }
+    class LineFeedback {
+        +int rating
+        +bool substituteAccepted
+    }
+    class Mandate {
+        +int version
+        +Money perOrderLimit
+        +Money perMonthLimit
+        +Money perEventLimit
+        +Percent maxSubPriceDelta
+        +Set~Allergen~ excludedAllergens
+        +Set~Diet~ requiredDiets
+        +Jws signature
+        +isValid(Instant now) bool
+    }
+    class PreferenceProfile {
+        +int version
+        +Scope scope
+        +Preset preset
+        +Map~Criterion,double~ weights
+        +List~PreferenceFilter~ filters
+        +List~ProductList~ lists
+        +score(Plan) double
+    }
+    class Recommendation {
+        +RecoKind kind
+        +String title
+        +Evidence evidence
+        +Money expectedImpact
+        +RecoStatus status
+        +apply() Mandate or PreferenceProfile
+    }
+    class AuditEvent {
+        +int seq
+        +Actor actor
+        +String action
+        +Json payload
+        +Hash prevHash
+        +Hash hash
+        +verifyChain(prev) bool
+    }
+    class LearningSignals {
+        <<derived view>>
+        +substitutionAcceptance(org, from, to) Ratio
+        +perGuestConsumption(org, eventType, need) Quantity
+        +supplierReliability(org, supplier) Ratio
+        +priceHistory(org, product) Series
+        +approvalPattern(org, rule) Stats
+    }
+
+    class OutcomeLabel {
+        +LabelCode code
+        +Target target
+        +double value
+        +LabelSource source
+        +String ruleVersion
+    }
+    class SiteDayContext {
+        +Date day
+        +int coversServed
+        +Ratio occupancy
+        +double tempMax
+        +bool localEvent
+    }
+    class Outcome {
+        <<enumeration>>
+        AUTO
+        NOTIFY
+        APPROVE
+        BLOCK
+    }
+    class Tier {
+        <<enumeration>>
+        BEST
+        BETTER
+        GOOD
+    }
+
+    Event "1" *-- "1..*" EventDish
+    Event "0..1" <-- "0..*" PurchaseProcess : sourced for
+    PurchaseProcess "1" *-- "1..*" RequestLine
+    EventDish "0..1" <.. "0..*" RequestLine : derived from
+    PurchaseProcess "1" *-- "0..*" OfferAttestation
+    PurchaseProcess "1" *-- "1..*" Plan
+    PurchaseProcess "1" *-- "0..*" ProcessException
+    PurchaseProcess "1" *-- "0..*" ManualChange
+    PurchaseProcess --> Mandate : governed by
+    PurchaseProcess --> PreferenceProfile : ranked by
+    Plan "1" *-- "1..*" PlanLine
+    Plan "1" *-- "1..*" CriterionScore
+    PlanLine --> OfferAttestation
+    PlanLine --> RequestLine
+    Plan "1" -- "1..*" PolicyDecision
+    PolicyDecision "1" *-- "0..*" RuleHit
+    PolicyDecision --> Outcome
+    Plan --> Tier
+    PolicyDecision "1" -- "0..1" Approval
+    Approval "1" o-- "0..*" ManualChange
+    Plan "1" -- "0..1" PurchaseOrder : becomes
+    PurchaseOrder "1" *-- "1..*" OrderLine
+    OrderLine --> OfferAttestation : price-locked
+    OrderLine --> RequestLine : fulfils
+    OrderLine "1" *-- "0..*" DeliveryLine
+    OrderLine "1" -- "0..1" Consumption
+    OrderLine "1" -- "0..1" LineFeedback
+    Consumption "1" --> "0..*" LeftoverLot : creates
+    LeftoverLot ..> PurchaseProcess : netted into
+    PurchaseProcess "1" *-- "1..*" AuditEvent
+    LearningSignals ..> Consumption : reads
+    LearningSignals ..> DeliveryLine : reads
+    LearningSignals ..> LineFeedback : reads
+    LearningSignals ..> Approval : reads
+    LearningSignals ..> Recommendation : produces
+    LearningSignals ..> SiteDayContext : explains demand
+    Consumption ..> OutcomeLabel : labelled as
+    PurchaseProcess ..> OutcomeLabel : labelled as
+    Event ..> OutcomeLabel : labelled as
+    OutcomeLabel ..> LearningSignals : trains
+    Recommendation ..> Mandate : new version
+    Recommendation ..> PreferenceProfile : new version

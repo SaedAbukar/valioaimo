@@ -1,0 +1,178 @@
+---
+title: "ER 3/5 · Order process (TXN) — request → offers → plans → decision → order"
+---
+erDiagram
+    SITE ||--o{ EVENT : hosts
+    EVENT ||--o{ EVENT_DIET_COUNT : "guests by diet"
+    EVENT ||--o{ EVENT_ALLERGY_COUNT : "guests by allergy"
+    EVENT ||--o{ EVENT_DISH : serves
+    RECIPE ||--o{ EVENT_DISH : "cooked as"
+    SITE ||--o{ PURCHASE_PROCESS : requests
+    AGENT ||--o{ PURCHASE_PROCESS : runs
+    EVENT |o--o{ PURCHASE_PROCESS : "sourced by"
+    MANDATE ||--o{ PURCHASE_PROCESS : governs
+    PREFERENCE_PROFILE ||--o{ PURCHASE_PROCESS : ranks
+    PURCHASE_PROCESS ||--|{ REQUEST_LINE : asks
+    EVENT_DISH |o--o{ REQUEST_LINE : "derived from"
+    NEED_GROUP ||--o{ REQUEST_LINE : "need for"
+    PURCHASE_PROCESS ||--o{ CANDIDATE_EXCLUSION : "why not"
+    PURCHASE_PROCESS ||--o{ OFFER : "receives signed"
+    PRODUCT ||--o{ OFFER : "offered as"
+    PURCHASE_PROCESS ||--|{ PLAN : "ranks alternatives"
+    PLAN ||--|{ PLAN_LINE : contains
+    PLAN ||--|{ PLAN_SCORE : "explained by"
+    REQUEST_LINE ||--o{ PLAN_LINE : "covered by"
+    OFFER ||--o{ PLAN_LINE : "priced by"
+    PLAN ||--o{ POLICY_DECISION : "evaluated by"
+    POLICY_DECISION ||--o{ DECISION_RULE_HIT : "fired"
+    POLICY_RULE ||--o{ DECISION_RULE_HIT : "fires as"
+    POLICY_DECISION ||--o| APPROVAL : "needs"
+    APPROVAL ||--o{ MANUAL_CHANGE : records
+    PURCHASE_PROCESS ||--o{ MANUAL_CHANGE : "corrected by"
+    PURCHASE_PROCESS ||--o{ PROCESS_EXCEPTION : "hit"
+    PLAN ||--o| PURCHASE_ORDER : "becomes"
+    PURCHASE_ORDER ||--|{ ORDER_LINE : contains
+    OFFER ||--o{ ORDER_LINE : "price-locked by"
+    REQUEST_LINE ||--o{ ORDER_LINE : fulfils
+
+    EVENT {
+        text event_id PK
+        text site_id FK
+        text name
+        text event_type
+        text service_style "plated buffet"
+        text starts_at
+        int expected_guests
+        int actual_guests
+    }
+    EVENT_DISH {
+        text event_dish_id PK
+        text event_id FK
+        text recipe_id FK
+        int planned_portions
+        int served_portions
+    }
+    PURCHASE_PROCESS {
+        text process_id PK "= audit traceId"
+        text site_id FK
+        text agent_id FK
+        text event_id FK
+        text context_type "event standing ad_hoc"
+        text channel "voice text api"
+        text language
+        text request_excerpt "max 280 chars"
+        text mandate_id FK
+        text profile_id FK
+        text need_by
+        text status
+        text created_at
+        text closed_at
+        int tool_call_count
+    }
+    REQUEST_LINE {
+        text request_line_id PK
+        text process_id FK
+        text need_group_id FK
+        text requested_product_id FK
+        text event_dish_id FK
+        numeric qty_requested
+        text unit_code FK
+        numeric qty_from_leftovers
+        numeric history_adjustment_pct
+    }
+    CANDIDATE_EXCLUSION {
+        text process_id PK,FK
+        text product_id PK,FK
+        text reason_code PK,FK
+    }
+    OFFER {
+        text offer_id PK
+        text process_id FK
+        text product_id FK
+        numeric unit_price_eur
+        int qty_available_packs
+        text availability_as_of
+        text stock_confidence
+        text earliest_delivery
+        numeric claimed_on_time_rate
+        text valid_until
+        text jws_sha256
+        text verification
+    }
+    PLAN {
+        text plan_id PK
+        text process_id FK
+        text strategy "single split partial"
+        text tier "BEST BETTER GOOD"
+        int rank
+        numeric total_score
+        text tradeoff_text
+    }
+    PLAN_SCORE {
+        text plan_id PK,FK
+        text criterion_code PK,FK
+        numeric raw_score
+        numeric weight "snapshot"
+    }
+    PLAN_LINE {
+        text plan_line_id PK
+        text plan_id FK
+        text request_line_id FK
+        text offer_id FK
+        int qty_cases
+        text delivery_date
+        text signal_note
+    }
+    POLICY_DECISION {
+        text decision_id PK
+        text plan_id FK
+        text outcome "AUTO NOTIFY APPROVE BLOCK"
+        text evaluated_at
+        text policy_version
+    }
+    DECISION_RULE_HIT {
+        text decision_id PK,FK
+        text rule_id PK,FK
+        text plan_line_id PK,FK
+        text reason_text
+    }
+    APPROVAL {
+        text approval_id PK
+        text decision_id FK,UK
+        text approver_user_id FK
+        text requested_at
+        text decided_at
+        text action
+    }
+    MANUAL_CHANGE {
+        text change_id PK
+        text process_id FK
+        text approval_id FK
+        text plan_line_id FK
+        text change_kind "preference_choice error_correction"
+        text field
+        text old_value
+        text new_value
+    }
+    PROCESS_EXCEPTION {
+        text exception_id PK
+        text process_id FK
+        text exception_code FK
+        text offer_id FK
+        text resolved_by
+    }
+    PURCHASE_ORDER {
+        text order_id PK
+        text plan_id FK,UK
+        text aimo_order_ref UK
+        text placed_at
+        text confirmation_jws_sha256
+    }
+    ORDER_LINE {
+        text order_line_id PK
+        text order_id FK
+        text request_line_id FK
+        text offer_id FK
+        int qty_cases
+        text delivery_date
+    }

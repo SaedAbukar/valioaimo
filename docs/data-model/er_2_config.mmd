@@ -1,0 +1,128 @@
+---
+title: "ER 2/5 · Buyer configuration & governance (CFG) — versioned, never edited in place"
+---
+erDiagram
+    ORGANIZATION ||--o{ SITE : runs
+    ORGANIZATION ||--o{ APP_USER : employs
+    ORGANIZATION ||--o{ AGENT : authorises
+    ROLE ||--o{ APP_USER : "assigned to"
+    ORGANIZATION ||--o{ MANDATE : signs
+    APP_USER ||--o{ MANDATE : issues
+    MANDATE ||--o| MANDATE : supersedes
+    MANDATE ||--o{ MANDATE_ALLOWED_CATEGORY : allows
+    MANDATE ||--o{ MANDATE_EXCLUDED_ALLERGEN : excludes
+    MANDATE ||--o{ MANDATE_REQUIRED_DIET : requires
+    ORGANIZATION ||--o{ PREFERENCE_PROFILE : owns
+    SITE |o--o{ PREFERENCE_PROFILE : "scoped to"
+    PREFERENCE_PROFILE ||--o{ PREFERENCE_WEIGHT : weights
+    CRITERION ||--o{ PREFERENCE_WEIGHT : "weighted in"
+    PREFERENCE_PROFILE ||--o{ PREFERENCE_FILTER : filters
+    PREFERENCE_PROFILE ||--o{ PRODUCT_LIST : keeps
+    PRODUCT_LIST ||--o{ PRODUCT_LIST_ITEM : contains
+    PRODUCT ||--o{ PRODUCT_LIST_ITEM : "listed in"
+
+    ORGANIZATION {
+        text org_id PK
+        text name
+        text org_type_code FK "hotel hospital school"
+        text country_code FK
+        text aimo_customer_no UK
+    }
+    SITE {
+        text site_id PK
+        text org_id FK
+        text name
+        text site_type
+        text city
+        text gln UK "GS1 location"
+        numeric storage_cold_l
+        numeric storage_dry_kg
+    }
+    APP_USER {
+        text user_id PK
+        text org_id FK
+        text role_code FK
+        text display_name "only PII kept"
+    }
+    ROLE {
+        text role_code PK "chef admin approver aimo_ops"
+    }
+    AGENT {
+        text agent_id PK
+        text org_id FK
+        text vendor
+        text protocol "rest mcp a2a"
+        text public_key_jwk
+        text status "kill switch"
+    }
+    MANDATE {
+        text mandate_id PK
+        text org_id FK
+        int version
+        text issued_by_user_id FK
+        text valid_from
+        text valid_until
+        numeric per_order_limit_eur
+        numeric per_month_limit_eur
+        numeric per_event_limit_eur
+        numeric max_sub_price_delta_pct
+        int allow_brand_switch
+        int allow_pack_change
+        text signature_jws
+        text supersedes_mandate_id FK
+        text change_source "manual recommendation"
+    }
+    MANDATE_ALLOWED_CATEGORY {
+        text mandate_id PK,FK
+        text category_id PK,FK
+    }
+    MANDATE_EXCLUDED_ALLERGEN {
+        text mandate_id PK,FK
+        text allergen_code PK,FK
+    }
+    MANDATE_REQUIRED_DIET {
+        text mandate_id PK,FK
+        text diet_code PK,FK
+    }
+    PREFERENCE_PROFILE {
+        text profile_id PK
+        text org_id FK
+        text site_id FK "null = org-wide"
+        text category_id FK "null = all"
+        int version
+        text preset
+        text created_by_user_id FK
+    }
+    PREFERENCE_WEIGHT {
+        text profile_id PK,FK
+        text criterion_code PK,FK
+        numeric weight "sums to 1"
+    }
+    CRITERION {
+        text criterion_code PK "price quality delivery ..."
+    }
+    PREFERENCE_FILTER {
+        text filter_id PK
+        text profile_id FK
+        text filter_type
+        text mode "required preferred excluded"
+        text brand_id FK
+        text supplier_id FK
+        text certificate_code FK
+        text country_code FK
+        numeric numeric_value
+    }
+    PRODUCT_LIST {
+        text list_id PK
+        text profile_id FK
+        text name
+        text list_kind "favourite never_buy pinned custom"
+    }
+    PRODUCT_LIST_ITEM {
+        text list_id PK,FK
+        text product_id PK,FK
+        int rank "fallback order"
+    }
+    PRODUCT {
+        text product_id PK
+    }

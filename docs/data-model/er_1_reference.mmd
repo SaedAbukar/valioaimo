@@ -1,0 +1,129 @@
+---
+title: "ER 1/5 · Reference data (REF) — products, need groups, allergens, labels"
+---
+erDiagram
+    COUNTRY ||--o{ SUPPLIER : "based in"
+    COUNTRY ||--o{ PRODUCT : "origin of"
+    SUPPLIER ||--o{ BRAND : owns
+    SUPPLIER ||--o{ PRODUCT : supplies
+    BRAND ||--o{ PRODUCT : brands
+    CATEGORY ||--o{ CATEGORY : "parent of"
+    CATEGORY ||--o{ NEED_GROUP : contains
+    CATEGORY ||--o| EMISSION_FACTOR : "has range"
+    NEED_GROUP ||--o{ PRODUCT : "met by"
+    UNIT ||--o{ NEED_GROUP : "base unit"
+    UNIT ||--o{ PRODUCT : "pack unit"
+    PRODUCT ||--o{ PRODUCT_ALLERGEN : declares
+    ALLERGEN ||--o{ PRODUCT_ALLERGEN : "declared in"
+    PRODUCT ||--o{ PRODUCT_DIET : tagged
+    DIET_TAG ||--o{ PRODUCT_DIET : tags
+    PRODUCT ||--o{ PRODUCT_CERTIFICATE : carries
+    CERTIFICATE ||--o{ PRODUCT_CERTIFICATE : "granted as"
+    DISH ||--o{ RECIPE : "made by"
+    RECIPE ||--o{ RECIPE_INGREDIENT : lists
+    NEED_GROUP ||--o{ RECIPE_INGREDIENT : "used in"
+
+    PRODUCT {
+        text product_id PK
+        text gtin UK "GS1 key"
+        text aimo_sku UK
+        text name
+        text brand_id FK
+        text supplier_id FK
+        text need_group_id FK
+        text origin_country_code FK
+        numeric pack_size
+        text pack_unit_code FK
+        int units_per_case
+        int shelf_life_days
+        text quality_grade "A B C"
+        numeric net_weight_kg_per_pack
+    }
+    NEED_GROUP {
+        text need_group_id PK
+        text category_id FK
+        text name UK "lactose-free semi-skimmed milk"
+        text base_unit_code FK
+        text perishability
+    }
+    CATEGORY {
+        text category_id PK
+        text parent_category_id FK
+        text name
+        int level
+    }
+    UNIT {
+        text unit_code PK
+        text dimension "volume mass count"
+        text base_unit_code FK
+        numeric to_base_factor
+    }
+    PRODUCT_ALLERGEN {
+        text product_id PK,FK
+        text allergen_code PK,FK
+        text presence "contains may_contain"
+    }
+    ALLERGEN {
+        text allergen_code PK "EU FIC Annex II, 14 codes"
+        text label
+    }
+    PRODUCT_DIET {
+        text product_id PK,FK
+        text diet_code PK,FK
+    }
+    DIET_TAG {
+        text diet_code PK
+        text label
+    }
+    PRODUCT_CERTIFICATE {
+        text product_id PK,FK
+        text certificate_code PK,FK
+        text valid_until
+        text credential_ref "VC id"
+    }
+    CERTIFICATE {
+        text certificate_code PK
+        text label
+        text issuer
+        int is_sustainability
+    }
+    SUPPLIER {
+        text supplier_id PK
+        text name
+        text country_code FK
+    }
+    BRAND {
+        text brand_id PK
+        text name UK
+        text owner_supplier_id FK
+    }
+    COUNTRY {
+        text country_code PK
+        text name
+        int is_domestic
+    }
+    EMISSION_FACTOR {
+        text category_id PK,FK
+        numeric kg_co2e_per_kg_low
+        numeric kg_co2e_per_kg_high
+        text source
+    }
+    DISH {
+        text dish_id PK
+        text name UK
+        text course
+    }
+    RECIPE {
+        text recipe_id PK
+        text dish_id FK
+        text owner_org_id FK "null = Aimo default"
+        int version
+        text diet_variant FK
+        numeric portion_g
+    }
+    RECIPE_INGREDIENT {
+        text recipe_id PK,FK
+        text need_group_id PK,FK
+        numeric qty_per_portion
+        numeric yield_factor
+    }

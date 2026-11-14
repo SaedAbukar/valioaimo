@@ -1,0 +1,101 @@
+# Aimo Agent Gateway – guardrail rules (declarative metadata).
+# The deterministic evaluator (gateway/policy.py, and its 1:1 JS port in the demo page)
+# implements each rule id; this file owns outcome, title and the plain-language
+# reason template. Outcome of a decision = strictest fired rule:
+#   BLOCK > APPROVE > NOTIFY > AUTO
+version: 1
+precedence: [BLOCK, APPROVE, NOTIFY, AUTO]
+params:
+  driftThresholdPct: 20
+  sanityMultiplier: 10
+rules:
+  - id: R0
+    side: buyer
+    title: Valid signed Intent Mandate
+    outcome: BLOCK
+    reason: "No valid Intent Mandate ({detail}). The agent may not commit spend."
+  - id: R1
+    side: buyer
+    title: Hard allergen / diet exclusion
+    outcome: BLOCK
+    reason: "{product} contains or may contain {violations}, which the mandate excludes ({issuer})."
+  - id: R2
+    side: buyer
+    title: Per-order spend limit
+    outcome: APPROVE
+    reason: "Order total {total} exceeds the per-order limit of {limit} set by {issuer}."
+  - id: R3
+    side: buyer
+    title: Monthly budget
+    outcome: APPROVE
+    reason: "Month-to-date spend {mtd} plus this order {total} exceeds the monthly budget of {limit}."
+  - id: R4
+    side: buyer
+    title: Substitution within tolerance
+    outcome: NOTIFY
+    reason: "{sub} replaces {primary} ({changes}, {delta} per {unit}); within the {max} tolerance, so the buyer is notified."
+  - id: R5
+    side: buyer
+    title: Substitution outside tolerance
+    outcome: APPROVE
+    reason: "{sub} replaces {primary} ({changes}, {delta} per {unit}); {why}, so a human must approve."
+  - id: R6
+    side: buyer
+    title: Coverage / split
+    outcome: APPROVE
+    reason: "{detail}"
+  - id: R7
+    side: buyer
+    title: Delivery after need-by date
+    outcome: APPROVE
+    reason: "{qty} of {product} arrives {date}, after the need-by date {needBy}."
+  - id: R8
+    side: buyer
+    title: First-time product
+    outcome: NOTIFY
+    reason: "{product} has never been ordered by {buyer} before."
+  - id: R9
+    side: buyer
+    title: Category outside mandate
+    outcome: APPROVE
+    reason: "{product} is in category '{category}', which the mandate does not allow."
+  - id: R10
+    side: buyer
+    title: Standing-order drift
+    outcome: APPROVE
+    reason: "Standing order {so}: {qty} is {drift} vs the 8-week median of {median}; auto-renew paused until a human confirms."
+  - id: V1
+    side: valio_aimo
+    title: Customer credit limit
+    outcome: BLOCK
+    reason: "Open invoices {open} plus this order {total} exceed the credit limit {limit} for {buyer}."
+  - id: V2
+    side: valio_aimo
+    title: Quantity sanity cap
+    outcome: BLOCK
+    reason: "{qty} of {product} is more than {mult}x this customer's 8-week median ({median}); likely an input error."
+  - id: V3
+    side: valio_aimo
+    title: Agent kill switch
+    outcome: BLOCK
+    reason: "Agent {agent} is suspended by Valio Aimo operations ({by})."
+  - id: R11
+    side: buyer
+    title: Required preference filter
+    outcome: APPROVE
+    reason: "{product} violates the required filter '{filter}' in preference profile v{version}."
+  - id: R12
+    side: buyer
+    title: Favourite available but not chosen
+    outcome: NOTIFY
+    reason: "{product} was chosen although favourite {favourite} is available by the need-by date."
+  - id: R13
+    side: buyer
+    title: Quantity right-sized vs baseline
+    outcome: NOTIFY
+    reason: "{product}: {planned} instead of the baseline {baseline} ({delta}) because {why}."
+  - id: R14
+    side: buyer
+    title: Event cost per guest
+    outcome: APPROVE
+    reason: "Event basket costs {perGuest} per guest, above the {target} target for {event}."

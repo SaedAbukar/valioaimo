@@ -1,0 +1,41 @@
+---
+title: "Data layers · capture everything, keep only refined, labelled data"
+---
+flowchart LR
+    subgraph SRC["Sources"]
+        A1["Buyer agent<br/>tool calls"]
+        A2["Gateway<br/>offers, policy, orders"]
+        A3["Kitchen app<br/>voice, approvals, usage"]
+        A4["Valio Aimo backend<br/>stock, delivery"]
+        A5["Context feeds<br/>calendar, weather, occupancy"]
+    end
+    subgraph L1["L1 RAW · event stream, 90 days"]
+        R["Append-only events<br/>schema-versioned JSON"]
+    end
+    subgraph L2["L2 REFINED · 3NF model, 24 months"]
+        C1["Validate and type"]
+        C2["Normalise units<br/>to L, kg, pcs"]
+        C3["Map codes<br/>GTIN, allergens, reasons"]
+        C4["De-duplicate and link<br/>process, order, line"]
+        T["67 labelled tables<br/>@domain @feeds @grain"]
+    end
+    subgraph L3["L3 INSIGHT · views, labels, metrics"]
+        V["Views v_* and signals sig_*"]
+        L["Outcome labels<br/>perfect_order, over_ordered ..."]
+        M["Governed metrics<br/>one definition each"]
+    end
+    subgraph USE["Consumers"]
+        U1["Ordering agent<br/>v_agent_features"]
+        U2["Buyer insights<br/>scorecard, waste, history"]
+        U3["Valio Aimo ops<br/>aggregates only"]
+    end
+    A1 & A2 & A3 & A4 & A5 --> R
+    R --> C1 --> C2 --> C3 --> C4 --> T
+    R -. "field with no consumer<br/>expires after 90 days" .-> X["Dropped"]
+    T --> V --> L
+    V --> M
+    L --> U1
+    V --> U1
+    M --> U2
+    L --> U2
+    M --> U3

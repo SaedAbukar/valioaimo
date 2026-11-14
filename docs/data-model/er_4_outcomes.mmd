@@ -1,0 +1,81 @@
+---
+title: "ER 4/5 · Observed outcomes (OBS), learning loop & audit (AUD)"
+---
+erDiagram
+    ORDER_LINE ||--o{ DELIVERY_LINE : "delivered as"
+    QUALITY_ISSUE |o--o{ DELIVERY_LINE : "flags"
+    ORDER_LINE ||--o| CONSUMPTION : "reconciled by"
+    WASTE_REASON |o--o{ CONSUMPTION : explains
+    CONSUMPTION |o--o{ LEFTOVER_LOT : "creates"
+    SITE ||--o{ LEFTOVER_LOT : stores
+    PRODUCT ||--o{ LEFTOVER_LOT : "is"
+    PURCHASE_PROCESS |o--o{ LEFTOVER_LOT : "uses up"
+    ORDER_LINE ||--o| LINE_FEEDBACK : "rated by"
+    ORGANIZATION ||--o{ RECOMMENDATION : receives
+    RECOMMENDATION |o--o| MANDATE : "applied as"
+    RECOMMENDATION |o--o| PREFERENCE_PROFILE : "applied as"
+    PURCHASE_PROCESS ||--o{ AUDIT_EVENT : "evidenced by"
+
+    DELIVERY_LINE {
+        text delivery_line_id PK
+        text order_line_id FK
+        text delivered_at
+        int qty_delivered_packs
+        text quality_issue_code FK
+        text best_before
+    }
+    CONSUMPTION {
+        text consumption_id PK
+        text order_line_id FK,UK
+        numeric qty_used
+        numeric qty_kept
+        numeric qty_redistributed
+        numeric qty_wasted
+        text waste_reason_code FK
+        numeric shortage_qty
+        int emergency_purchase
+        text recorded_by_user_id FK
+        text method "one_tap prefilled manual"
+    }
+    LEFTOVER_LOT {
+        text lot_id PK
+        text site_id FK
+        text product_id FK
+        text source_consumption_id FK
+        numeric qty_base
+        text best_before
+        text status
+        text used_in_process_id FK
+    }
+    LINE_FEEDBACK {
+        text order_line_id PK,FK
+        int rating "1-5"
+        int substitute_accepted
+        text given_by_user_id FK
+    }
+    RECOMMENDATION {
+        text recommendation_id PK
+        text org_id FK
+        text kind
+        text title
+        text evidence_json "n, period, process ids"
+        numeric expected_impact_eur
+        text status "open applied dismissed"
+        text applied_mandate_id FK
+        text applied_profile_id FK
+    }
+    AUDIT_EVENT {
+        text audit_event_id PK
+        text process_id FK
+        int seq
+        text ts
+        text actor_type
+        text actor_ref
+        text action
+        text payload_json
+        text prev_hash
+        text hash UK
+    }
+    ORDER_LINE {
+        text order_line_id PK
+    }

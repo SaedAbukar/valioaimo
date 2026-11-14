@@ -1,0 +1,70 @@
+---
+title: "ER 5/5 · Insight layer — context, outcome labels and governed metrics"
+---
+erDiagram
+    CALENDAR_DAY ||--o{ SITE_DAY_CONTEXT : "context for"
+    SITE ||--o{ SITE_DAY_CONTEXT : "measured at"
+    LABEL_DEFINITION ||--o{ OUTCOME_LABEL : defines
+    PURCHASE_PROCESS |o--o{ OUTCOME_LABEL : "labelled"
+    ORDER_LINE |o--o{ OUTCOME_LABEL : "labelled"
+    EVENT |o--o{ OUTCOME_LABEL : "labelled"
+    CALENDAR_DAY ||--o{ EVENT : "falls on"
+
+    CALENDAR_DAY {
+        text day PK
+        int iso_week
+        int weekday
+        int month
+        text season
+        int is_public_holiday
+        int is_school_holiday
+        text holiday_name "Juhannus"
+    }
+    SITE_DAY_CONTEXT {
+        text site_id PK,FK
+        text day PK,FK
+        int covers_served
+        numeric occupancy_rate
+        numeric temp_c_max
+        numeric precipitation_mm
+        int local_event_flag
+        text source "pms pos manual weather_api"
+    }
+    LABEL_DEFINITION {
+        text label_code PK "perfect_order over_ordered good_substitute ..."
+        text level "process order_line event"
+        text definition
+        text rule_version
+    }
+    OUTCOME_LABEL {
+        text label_id PK
+        text label_code FK
+        text process_id FK "exactly one target"
+        text order_line_id FK
+        text event_id FK
+        numeric value
+        text source "rule human model"
+        text labelled_at
+    }
+    METRIC_DEFINITION {
+        text metric_code PK
+        text name
+        text formula
+        text source_view
+        text grain
+        text unit
+        text better_when
+        text audience
+    }
+    SITE {
+        text site_id PK
+    }
+    PURCHASE_PROCESS {
+        text process_id PK
+    }
+    ORDER_LINE {
+        text order_line_id PK
+    }
+    EVENT {
+        text event_id PK
+    }
