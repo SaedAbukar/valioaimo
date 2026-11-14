@@ -103,9 +103,6 @@ def make_app(live: bool = True) -> Starlette:
     gw = lambda: state["gw"]  # noqa: E731
     agent = lambda: state["agent"]  # noqa: E731
 
-    def err(e: PlaybookError):
-        return JSONResponse(e.body(), status_code=e.status)
-
     async def body(req: Request) -> dict:
         try:
             return await req.json()
@@ -147,12 +144,10 @@ def make_app(live: bool = True) -> Starlette:
                                     status_code=429, headers={"Retry-After": str(max(1, int(-(-wait // 1))))})
             try:
                 return await fn(req)
-            except auth.AuthError as e:
-                rejected(req, fn.__name__, e.status, e.body())
+            except (auth.AuthError, PlaybookError) as e:
+                if not getattr(e, "audited", False):  # the engine already audits its own refusals
+                    rejected(req, fn.__name__, e.status, e.body())
                 return JSONResponse(e.body(), status_code=e.status)
-            except PlaybookError as e:
-                rejected(req, fn.__name__, e.status, e.body())
-                return err(e)
         return wrap
 
     def rejected(req: Request, route: str, status: int, body_: dict):
@@ -176,9 +171,9 @@ def make_app(live: bool = True) -> Starlette:
         auth.same_buyer(c, bid)
         args = {"buyerId": bid, "agentId": c.agent_id, "channel": "api"}
         key = req.headers.get("idempotency-key") or b.get("idempotencyKey")
-        out, replayed = await off_loop(gw().engine.idempotent, f"{c.agent_id}|start_session", key, args,
-                                       lambda: gw().engine.call(None, "start_session", args, actor=c.label))
-        return replay({**out, "idempotentReplay": True} if replayed else out, status=200 if replayed else 201)
+        out = await off_loop(gw().engine.idempotent, f"{c.agent_id}|start_session", key, args,
+                             lambda: gw().engine.call(None, "start_session", args, actor=c.label))
+        return replay(out, status=200 if out.get("idempotentReplay") else 201)
 
     @guarded
     async def session_get(req: Request):
@@ -190,7 +185,7 @@ def make_app(live: bool = True) -> Starlette:
 
     @guarded
     async def tool(req: Request):
-        c, s = own_session(req)
+        _, s = own_session(req)
         return replay(await off_loop(gw().engine.call, s["sessionId"], req.path_params["tool"], await body(req),
                                              idempotency_key=req.headers.get("idempotency-key")))
 
@@ -205,7 +200,7 @@ def make_app(live: bool = True) -> Starlette:
             return JSONResponse({"error": "guard_failed", "guard": "bad_input", "message": "after is an integer, wait is 0-25 seconds.",
                                  "fix": {"example": "?after=0&wait=20"}}, status_code=422)
         try:
-            evs = await anyio.to_thread.run_sync(gw().events.wait, s["sessionId"], after, wait)
+            evs = await off_loop(gw().events.wait, s["sessionId"], after, wait)
         except Busy:
             return JSONResponse({"error": "busy", "message": "All long-poll slots are taken. Retry shortly.",
                                  "fix": {"retryAfterSeconds": 2, "or": "call again with wait=0"}},
@@ -216,9 +211,7 @@ def make_app(live: bool = True) -> Starlette:
     # ---------------------------------------------------------------- proactive seller (Valio Aimo's own agent)
     @guarded
     async def suggestions(req: Request):
-        c = caller(req, "agent")
-        bid = req.query_params.get("buyerId") or c.buyer_id
-        auth.same_buyer(c, bid)
+        _, bid = buyer_of(req, "agent")
         return JSONResponse(await off_loop(seller.for_buyer, gw(), bid))
 
     @guarded
@@ -233,9 +226,8 @@ def make_app(live: bool = True) -> Starlette:
         key = req.headers.get("idempotency-key") or b.get("idempotencyKey")
         validate_input(seller.FEEDBACK_SCHEMA, "suggestion_feedback", b)
         b.pop("idempotencyKey", None)
-        out, replayed = gw().engine.idempotent(f"{sid}|feedback", key, b, lambda: seller.feedback(
-            gw(), c.buyer_id, sid, b["decision"], b.get("reason"), actor=c.label))
-        return replay({**out, "idempotentReplay": True} if replayed else out)
+        return replay(await off_loop(gw().engine.idempotent, f"{sid}|feedback", key, b, lambda: seller.feedback(
+            gw(), c.buyer_id, sid, b["decision"], b.get("reason"), actor=c.label)))
 
     @guarded
     async def session_log(req: Request):
@@ -317,7 +309,7 @@ def make_app(live: bool = True) -> Starlette:
         c = caller(req, "agent", "human", "ops")
         ev = gw().audit.events_for(c, trace_id=req.query_params.get("sessionId"))
         full = c.kind == "ops" and req.query_params.get("full") == "1"  # ops: re-hash the whole chain from genesis
-        return JSONResponse({"verify": gw().audit.verify(full=full), "events": ev})
+        return JSONResponse({"verify": await off_loop(gw().audit.verify, full=full), "events": ev})
 
     @guarded
     async def ops_metrics(req: Request):
@@ -416,8 +408,7 @@ def make_app(live: bool = True) -> Starlette:
             appr = decide_approval(gw(), s, ok, {"id": c.person_id, "name": c.name}, b.get("note"))
             return {"approval": appr, "next": "The agent may now call place_order." if ok else "The order stays unplaced."}
 
-        out, replayed = await off_loop(gw().engine.idempotent, f"{sid}|approval|{c.person_id}", key, b, decide)
-        return replay({**out, "idempotentReplay": True} if replayed else out)
+        return replay(await off_loop(gw().engine.idempotent, f"{sid}|approval|{c.person_id}", key, b, decide))
 
     # ---------------------------------------------------------------- chef app (a buyer's own staff, signed in)
     def buyer_of(req: Request, *kinds: str, bid: str | None = None) -> tuple[auth.Caller, str]:
@@ -564,13 +555,10 @@ def make_app(live: bool = True) -> Starlette:
 
     @guarded
     async def activity(req: Request):
-        sid = req.path_params["sid"]
-        s = gw().engine.sessions.get(sid)
         c = caller(req, "user", "human", "agent", "ops")
-        if not s:
-            raise NotFound(f"No session {sid}.")
+        s = gw().engine.session(req.path_params["sid"])
         auth.same_buyer(c, s["buyerId"])
-        return JSONResponse({"activity": state["agent"].activity(sid)})
+        return JSONResponse({"activity": state["agent"].activity(s["sessionId"])})
 
     # MCP over Streamable HTTP on THIS gateway: an MCP agent shares sessions, approvals, stock and audit with REST
     from . import mcp_app

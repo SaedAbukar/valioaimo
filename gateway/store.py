@@ -24,6 +24,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY, event_id TEXT, ts TEXT, trace_id TEXT,
                                              buyer TEXT, json TEXT, prev_hash TEXT, hash TEXT);
             CREATE INDEX IF NOT EXISTS ix_audit_trace ON audit(trace_id);
+            CREATE INDEX IF NOT EXISTS ix_audit_buyer ON audit(buyer, seq);
             """
         )
 
@@ -39,6 +40,13 @@ class Store:
                             (kind, id_, buyer, created or doc.get("createdAt") or "", json.dumps(doc, ensure_ascii=False)))
             self.db.commit()
         return doc
+
+    def put_many(self, kind: str, docs: dict[str, dict]):
+        """Several documents in one transaction (one commit)."""
+        with self.lock:
+            self.db.executemany("INSERT OR REPLACE INTO objects(kind,id,buyer,created,json) VALUES(?,?,?,?,?)",
+                                [(kind, k, None, "", json.dumps(v, ensure_ascii=False)) for k, v in docs.items()])
+            self.db.commit()
 
     def get(self, kind: str, id_: str) -> dict | None:
         with self.lock:

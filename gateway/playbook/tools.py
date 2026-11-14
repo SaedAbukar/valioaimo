@@ -542,8 +542,9 @@ def _lock_prices(gw, s):
         v = verify_offer(gw, d["offers"][l["gtin"]], qty=qty[l["gtin"]])
         if not v["verified"]:
             bad = "; ".join(c["detail"] for c in v["checks"] if not c["ok"] and c["id"] != "freshness")
-            only_stock = v["shortfall"] and all(c["ok"] or c["id"] == "freshness" for c in v["checks"] if c["id"] != "reverify")
-            if only_stock and "price now" not in bad:
+            only_stock = v["shortfall"] and not v["priceChanged"] and \
+                all(c["ok"] or c["id"] in ("freshness", "reverify") for c in v["checks"])
+            if only_stock:
                 _stock_changed(v["shortfall"])
             raise StepNotAllowed(f"Offer for {l['name']} is no longer valid ({bad}). Plan again.",
                                  guard="price_locked", next_allowed_tools=["plan_basket"])

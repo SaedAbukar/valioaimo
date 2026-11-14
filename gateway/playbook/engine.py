@@ -7,8 +7,6 @@ the HTTP and MCP facades turn into `409 step_not_allowed` + next_allowed_tools.
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
 import threading
 import time
 from datetime import timedelta
@@ -18,7 +16,7 @@ from pathlib import Path
 import jsonschema
 import yaml
 
-from ..util import iso, new_id, parse_dt
+from ..util import canonical, iso, new_id, parse_dt, sha256_hex
 
 PLAYBOOK_FILE = Path(__file__).resolve().parent / "order_playbook.v1.yaml"
 HUMAN_TOOLS = {"decide_approval"}
@@ -125,13 +123,13 @@ class Engine:
             return self.locks.setdefault(sid, threading.RLock())
 
     # ------------------------------------------------------------------ idempotency
-    def idempotent(self, scope: str, key: str | None, args: dict, fn) -> tuple[dict, bool]:
-        """Run fn once per (scope, key). A retry with the same body gets the stored response (replayed=True);
-        the same key with a different body is 422 idempotency_conflict. Failures are not stored, so a retry
-        after an error runs again."""
+    def idempotent(self, scope: str, key: str | None, args: dict, fn) -> dict:
+        """Run fn once per (scope, key). A retry with the same body gets the stored response marked
+        idempotentReplay: true; the same key with a different body is 422 idempotency_conflict. Failures are not
+        stored, so a retry after an error runs again."""
         if not key:
-            return fn(), False
-        h = hashlib.sha256(json.dumps(args, sort_keys=True, default=str).encode()).hexdigest()
+            return fn()
+        h = sha256_hex(canonical(args))
         k = f"{scope}|{key}"
         with self.gw.lock:
             hit = self.idem.get(k)
@@ -140,13 +138,13 @@ class Engine:
                     raise GuardFailed("This Idempotency-Key was already used with a different request body.",
                                       guard="idempotency_conflict",
                                       fix={"idempotencyKey": "use a new key for a new request, or resend the original body"})
-                return copy.deepcopy(hit["response"]), True
+                return {**copy.deepcopy(hit["response"]), "idempotentReplay": True}
             out = fn()
             now = self.gw.clock.now()
             for old in [x for x, v in self.idem.items() if now - parse_dt(v["at"]) >= IDEMPOTENCY_TTL]:
                 del self.idem[old]  # evict expired keys
             self.idem[k] = {"hash": h, "response": copy.deepcopy(out), "at": iso(now)}
-            return out, False
+            return out
 
     # ------------------------------------------------------------------ rules
     def allowed(self, s: dict | None) -> list[str]:
@@ -211,13 +209,23 @@ class Engine:
         args = dict(args or {})
         key = idempotency_key or args.pop("idempotencyKey", None)
         args.pop("idempotencyKey", None)
-        if not sid:
-            return self._call(sid, tool, args, actor)
-        with self.lock_for(sid):
-            if key and tool in IDEMPOTENT_TOOLS:
-                out, replayed = self.idempotent(f"{sid}|{tool}", key, args, lambda: self._call(sid, tool, args, actor))
-                return {**out, "idempotentReplay": True} if replayed else out
-            return self._call(sid, tool, args, actor)
+        try:
+            if not sid:
+                return self._call(sid, tool, args, actor)
+            with self.lock_for(sid):
+                if key and tool in IDEMPOTENT_TOOLS:
+                    return self.idempotent(f"{sid}|{tool}", key, args, lambda: self._call(sid, tool, args, actor))
+                return self._call(sid, tool, args, actor)
+        except PlaybookError as e:  # every refused call is evidence, whichever channel sent it (REST, MCP, chat)
+            self._reject(sid, tool, actor, e)
+            raise
+
+    def _reject(self, sid: str | None, tool: str, actor: str | None, e: "PlaybookError"):
+        from ..observability import audit_rejection
+        s = self.sessions.get(sid) if sid else None
+        who = actor or (f"agent:{s['agentId'].split(':')[-1]}" if s else "anonymous")
+        audit_rejection(self.gw, who, s["buyerId"] if s else None, tool, e.status, e.body(), trace_id=sid if s else None)
+        e.audited = True
 
     def _call(self, sid: str | None, tool: str, args: dict, actor: str | None) -> dict:
         pb = playbook()

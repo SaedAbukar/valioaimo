@@ -53,6 +53,8 @@ class Gateway:
         self.engine = Engine(self)
         self.events = Events(self)
         self.insights = InsightEngine(self)
+        from .seller import new_state
+        self.seller_state = new_state()  # Valio Aimo seller agent: suggestions, dismissals, last run per buyer
         from . import persist
         self.restored = persist.load(self)
 

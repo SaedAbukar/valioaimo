@@ -462,3 +462,15 @@ def test_re_registering_a_live_product_keeps_what_was_already_sold():
     be.release({"orderId": "O1", "lines": [{"gtin": "aimo:1", "qty": 60}]})
     be.register("aimo:1", 1.0, 100, mon)
     assert be.available_by("aimo:1", s2d(d)) == 100
+
+
+def test_verify_offer_reports_price_and_stock_changes_as_data():
+    from gateway.trust import verify_offer
+    gw = Gateway()
+    sid, s = in_process_to_present(gw)
+    of = s["data"]["offers"][s["data"]["plan"]["lines"][0]["gtin"]]
+    gw.backend.set_price(of["gtin"], of["unitPrice"] + 0.1)
+    v = verify_offer(gw, of, qty=10)
+    assert v["priceChanged"] == {"was": of["unitPrice"], "now": round(of["unitPrice"] + 0.1, 4)} and v["shortfall"] == []
+    gw.backend.set_price(of["gtin"], of["unitPrice"])
+    assert verify_offer(gw, of, qty=10)["priceChanged"] is None

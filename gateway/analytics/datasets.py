@@ -82,8 +82,8 @@ def _secs(a: str | None, b: str | None) -> float | None:
 
 def agent_activity(gw) -> list[dict]:
     rejected: dict[str, list[dict]] = {}
-    for e in gw.audit.events(limit=100000):
-        if e["action"].startswith("rejected.") and e.get("traceId"):
+    for e in gw.audit.rejections():
+        if e.get("traceId"):
             rejected.setdefault(e["traceId"], []).append(e)
     rows = []
     for s in gw.engine.sessions.values():
@@ -107,7 +107,7 @@ def agent_activity(gw) -> list[dict]:
             "order_total": order["total"] if order else None,
             "live_price_share": (sum(o.get("priceSource") == "valio-aimo-mock-api" for o in offers) / len(offers)) if offers else None,
             "suggestion": None})
-    for sg in (getattr(gw, "seller_state", None) or {}).get("suggestions", {}).values():
+    for sg in gw.seller_state["suggestions"].values():
         if sg["status"] in ("accepted", "dismissed"):
             buyer = gw.buyers.get(sg["buyerId"], {})
             rows.append({"kind": "suggestion", "buyer": sg["buyerId"], "site": buyer.get("site", {}).get("name"),

@@ -103,6 +103,12 @@ class AuditLedger:
             rows = self.store.db.execute(q, args).fetchall()
         return [json.loads(r[0]) for r in reversed(rows)]
 
+    def rejections(self) -> list[dict]:
+        """Only the refused calls (rejected.*), filtered in SQL rather than by parsing every event."""
+        with self.store.lock:
+            rows = self.store.db.execute("SELECT json FROM audit WHERE json LIKE '%\"action\": \"rejected.%' ORDER BY seq").fetchall()
+        return [json.loads(r[0]) for r in rows]
+
     def events_for(self, caller, trace_id: str | None = None, limit: int = 300) -> list[dict]:
         """A buyer's credentials see their own trail; Valio Aimo operations see every buyer."""
         return self.events(trace_id=trace_id, buyer_id=None if caller.kind == "ops" else caller.buyer_id, limit=limit)

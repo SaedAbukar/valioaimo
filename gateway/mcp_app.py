@@ -102,8 +102,9 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
                 authz.own_session(G(), me, session_id)
             return _dump(G().engine.call(session_id, name, args, actor=me.label if name == "start_session" else None))
         except (PlaybookError, auth.AuthError) as e:
-            audit_rejection(G(), me.label, me.buyer_id, name, e.status, e.body(),
-                            trace_id=session_id if session_id in G().engine.sessions else None)
+            if not getattr(e, "audited", False):  # the engine already audits its own refusals
+                audit_rejection(G(), me.label, me.buyer_id, name, e.status, e.body(),
+                                trace_id=session_id if session_id in G().engine.sessions else None)
             return _dump({"status": e.status, **e.body()})
 
     def run_insight(session_id, name, args):
@@ -131,9 +132,11 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
         if buyerId and buyerId != me.buyer_id:
             return forbidden(f"This agent acts only for {me.buyer_id}.")
         args = {"buyerId": me.buyer_id, "agentId": me.agent_id, "channel": "mcp"}
-        out, replayed = G().engine.idempotent(f"{me.agent_id}|start_session", idempotencyKey, args,
-                                              lambda: run(None, "start_session", args))
-        return out if not replayed else _dump({**json.loads(out), "idempotentReplay": True})
+        try:  # the engine's dict is what is stored, so a failed start is never replayed
+            return _dump(G().engine.idempotent(f"{me.agent_id}|start_session", idempotencyKey, args,
+                                               lambda: G().engine.call(None, "start_session", args, actor=me.label)))
+        except PlaybookError as e:
+            return _dump({"status": e.status, **e.body()})
 
     @tool
     def whoami() -> str:
@@ -211,11 +214,11 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
         args = {"decision": decision, **({"reason": reason} if reason else {})}
         try:
             validate_input(seller.FEEDBACK_SCHEMA, "suggestion_feedback", args)
-            out, replayed = G().engine.idempotent(f"{suggestionId}|feedback", idempotencyKey, args, lambda: seller.feedback(
+            out = G().engine.idempotent(f"{suggestionId}|feedback", idempotencyKey, args, lambda: seller.feedback(
                 G(), me.buyer_id, suggestionId, decision, reason, actor=me.label))
         except PlaybookError as e:
             return _dump({"status": e.status, **e.body()})
-        return _dump({**out, "idempotentReplay": True} if replayed else out)
+        return _dump(out)
 
     @tool
     def wait_for_update(sessionId: str, after: int = 0, timeoutSeconds: float = 20) -> str:
@@ -263,7 +266,7 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
         """Insight step 0 'start': open an analysis for this agent's buyer (optionally one kitchen). Data never crosses buyers."""
         me = ME()
         if buyerId and buyerId != me.buyer_id:
-            return _dump({"status": 403, "error": "forbidden", "message": f"This agent acts only for {me.buyer_id}."})
+            return forbidden(f"This agent acts only for {me.buyer_id}.")
         return run_insight(None, "start_analysis", {"buyerId": me.buyer_id, "siteId": siteId, "agent": "mcp"})
 
     # (an MCP tool list narrowed to next_allowed_tools would need list_changed notifications; this server is stateless
@@ -277,7 +280,7 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
     def ask_insight(buyerId: str, prompt: str, filters_json: str = "{}") -> str:
         """Shortcut: answer a question with a chart using the gateway's own analyst (runs the insight rails)."""
         if buyerId != ME().buyer_id:
-            return _dump({"status": 403, "error": "forbidden", "message": f"This agent acts only for {ME().buyer_id}."})
+            return forbidden(f"This agent acts only for {ME().buyer_id}.")
         try:
             filters = json.loads(filters_json or "{}")
             if not isinstance(filters, dict):

@@ -53,9 +53,11 @@ LABEL = "Hyvää Suomesta"
 
 
 # ------------------------------------------------------------------ state
+def new_state() -> dict:
+    return {"suggestions": {}, "dismissed": {}, "lastRun": {}}
+
+
 def state(gw) -> dict:
-    if not hasattr(gw, "seller_state") or gw.seller_state is None:
-        gw.seller_state = {"suggestions": {}, "dismissed": {}, "lastRun": {}}
     return gw.seller_state
 
 
@@ -247,29 +249,19 @@ def run(gw, bid: str, force: bool = False, notify: bool = True) -> list[dict]:
              if c["rec"]["id"] not in taken and not dismissed_recently(gw, bid, c["rec"]["id"]) and _allowed(gw, bid, c["rec"], c["category"])]
     # one of each kind first, then fill
     ordered = sorted(cands, key=lambda c: (c["type"] in kinds, ["seasonal", "better_option", "new_similar"].index(c["type"])))
-    for c in ordered:
-        if len(open_now) + len(new) >= MAX_OPEN:
-            break
-        if c["rec"]["id"] in taken or c["type"] in kinds:
-            continue
-        s = _build(gw, bid, c)
-        st["suggestions"][s["suggestionId"]] = s
-        taken.add(s["productId"])
-        kinds.add(s["type"])
-        new.append(s)
-        gw.audit.append(trace_id=None, actor=ACTOR, action="suggestion.created", buyer_id=bid,
-                        refs={"suggestionId": s["suggestionId"], "productId": s["productId"], "type": s["type"]}, reason=s["reason"])
-    for c in ordered:  # fewer kinds than slots: fill with more of the same
-        if len(open_now) + len(new) >= MAX_OPEN:
-            break
-        if c["rec"]["id"] in taken:
-            continue
-        s = _build(gw, bid, c)
-        st["suggestions"][s["suggestionId"]] = s
-        taken.add(s["productId"])
-        new.append(s)
-        gw.audit.append(trace_id=None, actor=ACTOR, action="suggestion.created", buyer_id=bid,
-                        refs={"suggestionId": s["suggestionId"], "productId": s["productId"], "type": s["type"]}, reason=s["reason"])
+    for one_per_kind in (True, False):  # one of each kind first, then fill the free slots with more of the same
+        for c in ordered:
+            if len(open_now) + len(new) >= MAX_OPEN:
+                break
+            if c["rec"]["id"] in taken or (one_per_kind and c["type"] in kinds):
+                continue
+            s = _build(gw, bid, c)
+            st["suggestions"][s["suggestionId"]] = s
+            taken.add(s["productId"])
+            kinds.add(s["type"])
+            new.append(s)
+            gw.audit.append(trace_id=None, actor=ACTOR, action="suggestion.created", buyer_id=bid,
+                            refs={"suggestionId": s["suggestionId"], "productId": s["productId"], "type": s["type"]}, reason=s["reason"])
     if notify:
         for s in new:
             gw.events.emit_buyer(bid, "suggestion.created", event_data(s))

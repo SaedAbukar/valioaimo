@@ -79,22 +79,33 @@ def _demo(gw) -> dict[str, Caller]:
     return out
 
 
+_CACHE: dict = {}
+
+
 def _configured(gw) -> dict[str, Caller]:
     path = os.environ.get("AIMO_TOKENS_FILE")
     if not path:
         return {}
+    key = (path, os.stat(path).st_mtime_ns, id(gw))
+    if _CACHE.get("configured", (None,))[0] == key:  # re-read only when the file changes
+        return _CACHE["configured"][1]
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
     out = {}
-    for tok, v in json.loads(open(path, encoding="utf-8").read()).items():
+    for tok, v in raw.items():
         bid = v.get("buyerId")
         b = gw.buyers.get(bid, {})
         name = v.get("name") or next((p["name"] for p in b.get("approvers", []) if p["id"] == v.get("personId")), "") or \
             next((a["name"] for a in b.get("agents", []) if a["id"] == v.get("agentId")), "")
         out[tok] = Caller(v["kind"], bid, agent_id=v.get("agentId"), person_id=v.get("personId"), name=name, role=v.get("role", ""))
+    _CACHE["configured"] = (key, out)
     return out
 
 
 def registry(gw) -> dict[str, Caller]:
-    return {**(_demo(gw) if demo_mode() else {}), **_configured(gw)}
+    if demo_mode() and getattr(gw, "_demo_tokens", None) is None:
+        gw._demo_tokens = _demo(gw)  # buyers, agents and approvers are fixed for a gateway's lifetime
+    return {**(gw._demo_tokens if demo_mode() else {}), **_configured(gw)}
 
 
 def resolve(gw, header: str | None) -> Caller | None:

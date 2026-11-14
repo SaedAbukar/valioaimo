@@ -76,3 +76,22 @@ def test_raw_metrics_are_ops_only_and_count_calls(c):
     assert m["status"]["409"] >= 1 and 0 < m["rates"]["409"] < 1
     assert {"calls", "errors", "latencyMs", "breaker"} <= set(m["adapter"])
     assert "/v1/ops/metrics-raw" in c.get("/openapi.json").json()["paths"]
+
+
+def test_rejections_are_audited_once_on_every_channel():
+    """In-process callers (the chef assistant) are audited too, and REST does not audit the same refusal twice."""
+    from gateway.core import Gateway
+    from gateway.playbook.engine import StepNotAllowed
+    gw = Gateway()
+    sid = gw.engine.call(None, "start_session", {"buyerId": "BUY-POHJOLA"})["sessionId"]
+    with pytest.raises(StepNotAllowed):
+        gw.engine.call(sid, "place_order", {"offerIds": ["x"]})
+    rej = [e for e in gw.audit.events(trace_id=sid) if e["action"] == "rejected.place_order"]
+    assert len(rej) == 1 and rej[0]["refs"]["status"] == 409 and rej[0]["actor"] == "agent:pohjola-buyer-01"
+
+
+def test_rest_rejection_is_not_audited_twice(c):
+    sid = c.post("/v1/sessions", json={}, headers=AGENT).json()["sessionId"]
+    c.post(f"/v1/sessions/{sid}/tools/place_order", json={}, headers=AGENT)
+    ev = c.get(f"/v1/audit?sessionId={sid}", headers=AGENT).json()["events"]
+    assert len([e for e in ev if e["action"] == "rejected.place_order"]) == 1

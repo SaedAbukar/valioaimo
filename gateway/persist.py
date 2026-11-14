@@ -27,16 +27,14 @@ def snapshot(gw) -> dict:
     return {"sessions": gw.engine.sessions, "orders": gw.orders, "approvals": gw.approvals, "inbox": gw.inbox,
             "kill_switch": gw.kill_switch, "events": gw.events.log, "idem": gw.engine.idem,
             "memory": getattr(gw, "memory", None), "backend": _backend(gw.backend),
-            "seller": getattr(gw, "seller_state", None)}
+            "seller": gw.seller_state}
 
 
 def save(gw):
     if not enabled(gw):
         return
     with gw.lock:
-        for k, v in snapshot(gw).items():
-            if v is not None:
-                gw.store.put(KIND, k, {"v": v})
+        gw.store.put_many(KIND, {k: {"v": v} for k, v in snapshot(gw).items() if v is not None})
 
 
 def load(gw) -> bool:

@@ -12,10 +12,11 @@ grouped by customer, kitchen, agent or approver):
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 from .analytics import charts, datasets, query
 from .playbook.engine import GuardFailed
+from .util import day_label, s2d
 
 K = 3
 BY = {"day": {"field": "date", "grain": "day"}, "category": "category", "product": "product"}
@@ -28,16 +29,13 @@ def _period(gw, frm: str | None, to: str | None, days: int = 14) -> dict:
     return {"from": frm or today.isoformat(), "to": to or (today + timedelta(days=days)).isoformat()}
 
 
-def _chart(res: dict, kind: str, title: str | None) -> dict | None:
+def _chart(res: dict, kind: str) -> dict | None:
     if not res["rows"]:
         return None
     try:
-        return charts.build(res, {"type": kind, **({"title": title} if title else {})})
+        return charts.build(res, {"type": kind})
     except GuardFailed:
         return None
-
-
-DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 def _day_chart(rows: list[dict]) -> dict | None:
@@ -46,8 +44,7 @@ def _day_chart(rows: list[dict]) -> dict | None:
         return None
     vals = []
     for r in rows:
-        d = date.fromisoformat(r["date"])
-        vals.append({**r, "day": f"{DAYS[d.weekday()]} {d.day}.{d.month}."})
+        vals.append({**r, "day": day_label(s2d(r["date"]))})
     qty = {"type": "quantitative", "format": ",.0f"}
     return {"$schema": charts.SCHEMA_URL, "data": {"values": vals}, "width": "container", "height": 200,
             "mark": {"type": "bar", "size": 24, "cornerRadiusEnd": 4},
@@ -80,7 +77,7 @@ def demand(gw, frm: str | None = None, to: str | None = None, by: str = "day") -
         spec["sort"] = [{"by": "planned_qty", "dir": "desc"}]
         spec["limit"] = 20
     res = query.run(datasets.connect(gw), spec, None, k_anon=K)
-    chart = _day_chart(res["rows"]) if by == "day" else _chart(res, "bar", None)
+    chart = _day_chart(res["rows"]) if by == "day" else _chart(res, "bar")
     return {"by": by, "period": res["period"], "kAnonymity": K, "suppressed": res["suppressed"], "columns": res["columns"],
             "rows": res["rows"], "chart": chart,
             "explain": "What agents planned and ordered, by need-by date: next week's need before the orders arrive."}
@@ -91,12 +88,12 @@ REASON_TEXT = {"blocked_allergen": "an allergen the kitchen never orders", "not_
 
 
 def lost_sales(gw, frm: str | None = None, to: str | None = None) -> dict:
-    p = {"from": frm or date(2026, 1, 1).isoformat(), "to": to or (gw.clock.today() + timedelta(days=60)).isoformat()}
+    p = {"from": frm or datasets.WIDE[0].isoformat(), "to": to or (gw.clock.today() + timedelta(days=60)).isoformat()}
     res = query.run(datasets.connect(gw), {"dataset": "demand", "measures": ["unmet_qty", "lost_value_eur", "lines"],
                                            "dimensions": ["unmet_reason"], "filters": [{"field": "source", "op": "eq", "value": "unmet"}],
                                            "period": p, "sort": [{"by": "lost_value_eur", "dir": "desc"}]}, None, k_anon=K)
     for r in res["rows"]:
         r["why"] = REASON_TEXT.get(r["unmet_reason"], r["unmet_reason"])
     return {"period": res["period"], "kAnonymity": K, "suppressed": res["suppressed"], "columns": res["columns"], "rows": res["rows"],
-            "chart": _chart(res, "bar", None),
+            "chart": _chart(res, "bar"),
             "explain": "What agents asked for that Valio Aimo could not supply, and why: input for assortment and supplier decisions."}
