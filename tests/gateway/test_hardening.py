@@ -243,3 +243,49 @@ def test_offer_expiring_event_is_emitted_on_read():
     n_offers = len(s["data"]["plan"]["offers"])
     assert len([e for e in gw.events.read(sid, 0) if e["type"] == "offer.expiring"]) == n_offers
     assert len([e for e in gw.events.read(sid, 0) if e["type"] == "offer.expiring"]) == n_offers  # once per offer
+
+
+# ---------------------------------------------------------------- Task 5: state survives a restart
+def test_restart_keeps_pending_approval_and_keys(tmp_path):
+    from gateway.crypto import verify_jws
+    db, keys = str(tmp_path / "gw.db"), tmp_path / "keys"
+    gw1 = Gateway(db=db, keys_dir=keys)
+    sid, s = in_process_to_present(gw1, BRIEF.replace("1,000", "3,000"))
+    aid = gw1.engine.call(sid, "request_approval")["output"]["approval"]["approvalId"]
+    jwks1 = gw1.jwks()
+    gw1.store.db.close()
+
+    gw2 = Gateway(db=db, keys_dir=keys)  # the gateway restarts
+    assert gw2.jwks() == jwks1
+    assert [m["approvalId"] for m in gw2.inbox] == [aid] and gw2.approvals[aid] == sid
+    from gateway.playbook.tools import decide_approval
+    s2 = gw2.engine.session(sid)
+    decide_approval(gw2, s2, True, {"id": "usr-lvirtanen", "name": "Laura Virtanen"})
+    order = gw2.engine.call(sid, "place_order", {"offerIds": offer_ids(s2)})["output"]
+    ok, payload, _ = verify_jws(order["confirmation"]["jws"], jwks1["keys"])
+    assert ok and payload["approvedBy"] == "Laura Virtanen"
+    assert gw2.audit.verify()["ok"]
+    acts = [e["action"] for e in gw2.audit.events(trace_id=sid, limit=300)]
+    assert "playbook.request_approval" in acts and "approved" in acts and acts[-1] == "playbook.place_order"
+    assert [e["seq"] for e in gw2.events.read(sid, 0)] == list(range(1, len(gw2.events.read(sid, 0)) + 1))
+    gw2.store.db.close()
+    gw3 = Gateway(db=db, keys_dir=keys)
+    assert order["orderId"] in gw3.orders and len(gw3.backend.orders) == 1
+
+
+def test_memory_gateway_does_not_write_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Gateway()
+    assert not list(tmp_path.iterdir())
+
+
+def test_app_restart_with_aimo_db_keeps_orders_and_reset_wipes(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "gw.db"))
+    c1 = TestClient(make_app(live=False))
+    sid, out = http_to_present(c1)
+    oid = c1.post(f"/v1/sessions/{sid}/tools/place_order", json={"offerIds": [o["offerId"] for o in out["plan_basket"]["offers"]]},
+                  headers=AGENT).json()["output"]["orderId"]
+    c2 = TestClient(make_app(live=False))
+    assert c2.get(f"/v1/orders/{oid}", headers=AGENT).json()["confirmationVerified"]
+    c2.post("/v1/demo/reset")
+    assert c2.get(f"/v1/orders/{oid}", headers=AGENT).status_code == 404

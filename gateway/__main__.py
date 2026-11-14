@@ -47,11 +47,17 @@ DEMO_GALA = ("Gala dinner for 180 on Saturday 21.11.: salmon starter, beef tende
 def make_app(live: bool = True) -> Starlette:
     state = {}
 
-    def boot():
-        state["gw"] = Gateway(live=live)
+    def boot(fresh: bool = False):
+        # AIMO_DB=data/gateway.db (make run) keeps sessions, orders, approvals and keys across restarts; default :memory:
+        db = os.environ.get("AIMO_DB", ":memory:")
+        keys = Path(db).parent / "keys" if db != ":memory:" else None
+        if fresh and db != ":memory:":
+            from .store import Store
+            Store(db).wipe()
+        state["gw"] = Gateway(db=db, live=live, keys_dir=keys)
         state["agent"] = ChefAssistant(state["gw"])
         state["analyst"] = Analyst(state["gw"])
-        if os.environ.get("AIMO_SEED_DEMO", "1") == "1":  # the app opens on the gala example, already ordered
+        if os.environ.get("AIMO_SEED_DEMO", "1") == "1" and not state["gw"].restored:  # the app opens on the gala example, already ordered
             r = state["agent"].message(None, DEMO_GALA, "BUY-POHJOLA")
             state["agent"].action(r["conversation"]["id"], "order")
 
@@ -237,6 +243,7 @@ def make_app(live: bool = True) -> Starlette:
         aid = req.path_params["aid"]
         paused = bool(b.get("paused", True))
         gw().kill_switch[aid] = paused
+        gw().save()
         gw().audit.append(trace_id=None, actor=c.label, action="agent.paused" if paused else "agent.resumed", buyer_id=None,
                           refs={"agentId": aid}, reason=b.get("reason") or "operations decision")
         return JSONResponse({"agentId": aid, "paused": paused})
@@ -317,7 +324,7 @@ def make_app(live: bool = True) -> Starlette:
         return JSONResponse(catalog.search(b.get("query", ""), b.get("category"), b.get("diet"), b.get("excludeAllergens")))
 
     async def reset(_):
-        boot()
+        boot(fresh=True)
         return JSONResponse({"ok": True})
 
     async def rules_ep(_):

@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from pathlib import Path
 
 
 class Store:
     def __init__(self, path: str = ":memory:"):
         self.path = path
         self.lock = threading.RLock()
+        if path != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL") if path != ":memory:" else None
         self.db.executescript(

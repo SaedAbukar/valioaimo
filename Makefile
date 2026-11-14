@@ -1,7 +1,7 @@
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
 run: build
-	$(PY) -m gateway
+	AIMO_DB=data/gateway.db $(PY) -m gateway
 
 test:
 	$(PY) -m pytest -q tests

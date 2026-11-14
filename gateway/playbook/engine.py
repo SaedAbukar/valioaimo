@@ -243,6 +243,7 @@ class Engine:
                              reason=_summary(tool, out))
         nxt = self.allowed(s)
         self._emit(s, tool, step_id, out, nxt)
+        self.gw.save()
         return {"tool": tool, "step": step_id, "output": out, "next_allowed_tools": nxt,
                 "sessionId": s["sessionId"], "playbookVersion": pb["version"]}
 

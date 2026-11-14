@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import threading
 from datetime import timedelta
+from pathlib import Path
 
 from . import catalog, planner, policy, preferences, signals as sig, trust
 from .adapter import FixtureBackend, make_client
@@ -20,19 +21,20 @@ from .util import iso, new_id, s2d
 
 
 class Gateway:
-    def __init__(self, db: str = ":memory:", clock: Clock | None = None, live: bool = False):
+    def __init__(self, db: str = ":memory:", clock: Clock | None = None, live: bool = False, keys_dir: str | Path | None = None):
         self.clock = clock or Clock(frozen=True)
         self.lock = threading.RLock()  # order placement: verify -> reserve -> place is atomic (no overselling)
         self.store = Store(db)
         self.backend = FixtureBackend(self.clock)
         self.audit = AuditLedger(self.store, self.clock)
-        self.gateway_key = load_or_create(None, "gw-2026-11")
+        keys = Path(keys_dir) if keys_dir else None  # PEM files: the JWKS stays the same across restarts
+        self.gateway_key = load_or_create(keys / "gw-2026-11.pem" if keys else None, "gw-2026-11")
         self.buyer_keys = {}
         self.buyers = {b["id"]: copy.deepcopy(b) for b in catalog.load_buyers()["buyers"]}
         self.profiles = {bid: preferences.default_profile(bid) for bid in self.buyers}
         self.mandates = {}
         for bid, b in self.buyers.items():
-            self.buyer_keys[bid] = load_or_create(None, f"buyer-{bid.lower()}")
+            self.buyer_keys[bid] = load_or_create(keys / f"buyer-{bid.lower()}.pem" if keys else None, f"buyer-{bid.lower()}")
             self.register_mandate(bid, self.sign_mandate(bid, b["mandate"]))
         self.records: list[dict] = []
         # v2: playbook rails, live mock API (only when asked for and configured), orders board
@@ -45,6 +47,13 @@ class Gateway:
         from .events import Events
         self.engine = Engine(self)
         self.events = Events(self)
+        from . import persist
+        self.restored = persist.load(self)
+
+    def save(self):
+        """Persist sessions, orders, inbox, stock, events (no-op for an in-memory gateway)."""
+        from . import persist
+        persist.save(self)
 
     # --- discovery ---------------------------------------------------------
     def jwks(self) -> dict:
