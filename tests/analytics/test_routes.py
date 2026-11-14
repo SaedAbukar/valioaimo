@@ -10,7 +10,7 @@ from gateway.__main__ import make_app  # noqa: E402
 
 @pytest.fixture(scope="module")
 def c():
-    return TestClient(make_app(live=False))
+    return TestClient(make_app(live=False), headers={"Authorization": "Bearer demo-user-buy-pohjola"})
 
 
 def test_tool_manifest_covers_order_and_insight_journeys(c):

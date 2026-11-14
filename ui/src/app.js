@@ -63,8 +63,9 @@ const store = { get(k, d) { try { const v = localStorage.getItem('aimo.' + k); r
 
 // ------------------------------------------------------------------ API: live gateway or replay
 const Live = {
+  // the chef app signs in as the kitchen's own user (demo credential); approvals use the approver's credential
   async j(path, body, token) {
-    const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) };
+    const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (token || 'demo-user-' + S.buyerId.toLowerCase()) };
     const r = await fetch(path, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) });
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.message || 'Something went wrong'), { data });

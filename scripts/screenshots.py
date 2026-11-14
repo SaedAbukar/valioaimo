@@ -25,7 +25,7 @@ def wait_idle(page):
 
 def open_app(page, buyer="BUY-POHJOLA", reset=True):
     if reset:
-        page.request.post(BASE + "/v1/demo/reset", data="{}", headers={"Content-Type": "application/json"})
+        page.request.post(BASE + "/v1/demo/reset", data="{}", headers={"Content-Type": "application/json", "Authorization": "Bearer demo-ops"})
     page.goto(BASE + "/")
     page.evaluate(f"localStorage.setItem('aimo.buyer', {json.dumps(json.dumps(buyer))}); localStorage.removeItem('aimo.conv')")
     page.goto(BASE + "/")

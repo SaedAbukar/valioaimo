@@ -287,7 +287,7 @@ def test_app_restart_with_aimo_db_keeps_orders_and_reset_wipes(tmp_path, monkeyp
                   headers=AGENT).json()["output"]["orderId"]
     c2 = TestClient(make_app(live=False))
     assert c2.get(f"/v1/orders/{oid}", headers=AGENT).json()["confirmationVerified"]
-    c2.post("/v1/demo/reset")
+    c2.post("/v1/demo/reset", headers={"Authorization": "Bearer demo-ops"})
     assert c2.get(f"/v1/orders/{oid}", headers=AGENT).status_code == 404
 
 

@@ -334,35 +334,71 @@ def make_app(live: bool = True) -> Starlette:
         out, replayed = gw().engine.idempotent(f"{sid}|approval|{c.person_id}", key, b, decide)
         return replay({**out, "idempotentReplay": True} if replayed else out)
 
+    # ---------------------------------------------------------------- chef app (a buyer's own staff, signed in)
+    def buyer_of(req: Request, *kinds: str, bid: str | None = None) -> tuple[auth.Caller, str]:
+        """The chef app's caller (a buyer user or approver) and the buyer it may see: always its own."""
+        c = caller(req, *(kinds or ("user", "human")))
+        b = bid or req.query_params.get("buyerId") or c.buyer_id
+        auth.same_buyer(c, b)
+        return c, b
+
+    def own_conv(req: Request, cid: str) -> tuple[auth.Caller, dict]:
+        c = caller(req, "user", "human")
+        cv = agent().convs.get(cid)
+        if not cv:
+            raise NotFound(f"No conversation {cid}.", fix={"call": "GET /v1/chats"})
+        auth.same_buyer(c, cv["buyerId"])
+        return c, cv
+
+    @guarded
     async def chat(req: Request):
         b = await body(req)
-        try:
-            return JSONResponse(agent().message(b.get("conversationId"), b["text"], b.get("buyerId", "BUY-POHJOLA")))
-        except PlaybookError as e:
-            return err(e)
+        if b.get("conversationId"):
+            c, cv = own_conv(req, b["conversationId"])
+            bid = cv["buyerId"]
+        else:
+            c, bid = buyer_of(req, bid=b.get("buyerId"))
+        return JSONResponse(agent().message(b.get("conversationId"), b["text"], bid))
 
+    @guarded
     async def chat_action(req: Request):
         b = await body(req)
-        try:
-            return JSONResponse(agent().action(req.path_params["cid"], b["action"], b.get("payload"), b.get("by")))
-        except PlaybookError as e:
-            return err(e)
+        c, cv = own_conv(req, req.path_params["cid"])
+        if b.get("action") in ("approve", "decline"):  # a named approver's decision: their own credential, never a name in the body
+            if c.kind != "human":
+                raise auth.AuthError(403, "forbidden", "Only a named approver, with their own credential, can approve or decline.")
+            if b["action"] == "decline":
+                sid = (b.get("payload") or {}).get("sessionId") or cv["sessionIds"][-1]
+                cards = agent().decide(sid, False, c.person_id)
+                agent()._say(cv, cards, sid)
+                return JSONResponse({"conversation": agent().public(cv), "cards": cards})
+            return JSONResponse(agent().action(cv["id"], "approve", b.get("payload"), c.person_id))
+        return JSONResponse(agent().action(cv["id"], b["action"], b.get("payload")))
 
+    @guarded
     async def chats(req: Request):
-        return JSONResponse({"chats": agent().list(req.query_params.get("buyerId"))})
+        _, bid = buyer_of(req)
+        return JSONResponse({"chats": agent().list(bid)})
 
+    @guarded
     async def chat_get(req: Request):
-        c = agent().convs.get(req.path_params["cid"])
-        return JSONResponse(agent().public(c)) if c else JSONResponse({"error": "not_found"}, status_code=404)
+        _, cv = own_conv(req, req.path_params["cid"])
+        return JSONResponse(agent().public(cv))
 
+    @guarded
     async def board(req: Request):
-        return JSONResponse(agent().board(req.query_params.get("buyerId")))
+        _, bid = buyer_of(req)
+        return JSONResponse(agent().board(bid))
 
+    @guarded
     async def insights_ep(req: Request):
-        return JSONResponse(insights.for_buyer(gw(), req.query_params.get("buyerId", "BUY-POHJOLA")))
+        _, bid = buyer_of(req)
+        return JSONResponse(insights.for_buyer(gw(), bid))
 
+    @guarded
     async def settings_ep(req: Request):
-        return JSONResponse(insights.settings(gw(), req.query_params.get("buyerId", "BUY-POHJOLA")))
+        _, bid = buyer_of(req)
+        return JSONResponse(insights.settings(gw(), bid))
 
     async def search(req: Request):
         b = await body(req)
@@ -370,8 +406,13 @@ def make_app(live: bool = True) -> Starlette:
             return JSONResponse(aimo_products.search(b.get("query", ""), b.get("excludeAllergens"), b.get("diet")))
         return JSONResponse(catalog.search(b.get("query", ""), b.get("category"), b.get("diet"), b.get("excludeAllergens")))
 
-    async def reset(_):
+    @guarded
+    async def reset(req: Request):
+        c = caller(req, "ops", "user", "human")
+        if c.kind != "ops" and not auth.demo_mode():
+            raise auth.AuthError(403, "forbidden", "Reset needs the operations credential outside demo mode.")
         boot(fresh=True)
+        gw().audit.append(trace_id=None, actor=c.label, action="demo.reset", buyer_id=None, reason="demo data reset")
         return JSONResponse({"ok": True})
 
     async def rules_ep(_):
@@ -381,62 +422,69 @@ def make_app(live: bool = True) -> Starlette:
         return JSONResponse(gw().jwks())
 
     # ---------------------------------------------------------------- insights, history, kitchens
-    def bid_of(req):
-        b = req.query_params.get("buyerId", "BUY-POHJOLA")
-        if b not in gw().buyers:
-            raise PlaybookError(f"Unknown buyer {b}.")
-        return b
-
     async def tools_ep(_):
         return JSONResponse(manifest.tools())
 
     async def insight_playbook_ep(_):
         return JSONResponse(insight_engine.public())
 
+    @guarded
     async def insight_sessions(req: Request):
-        try:
-            return JSONResponse(gw().insights.call(None, "start_analysis", await body(req)), status_code=201)
-        except PlaybookError as e:
-            return err(e)
+        c = caller(req, "agent", "user", "human")
+        b = await body(req)
+        bid = b.get("buyerId") or c.buyer_id
+        auth.same_buyer(c, bid)
+        args = {**b, "buyerId": bid, "agent": "analyst" if c.kind != "agent" else (c.agent_id or "").split(":")[-1]}
+        return JSONResponse(gw().insights.call(None, "start_analysis", args), status_code=201)
 
+    @guarded
     async def insight_tool(req: Request):
-        try:
-            return JSONResponse(gw().insights.call(req.path_params["sid"], req.path_params["tool"], await body(req)))
-        except PlaybookError as e:
-            return err(e)
+        c = caller(req, "agent", "user", "human")
+        s = gw().insights.sessions.get(req.path_params["sid"])
+        if s:
+            auth.same_buyer(c, s["buyerId"])
+        return JSONResponse(gw().insights.call(req.path_params["sid"], req.path_params["tool"], await body(req)))
 
+    @guarded
     async def ask(req: Request):
         b = await body(req)
-        try:
-            return JSONResponse(state["analyst"].ask(b.get("prompt", ""), b.get("filters") or {}, b.get("buyerId", "BUY-POHJOLA"), b.get("siteId")))
-        except PlaybookError as e:
-            return err(e)
+        _, bid = buyer_of(req, bid=b.get("buyerId"))
+        return JSONResponse(state["analyst"].ask(b.get("prompt", ""), b.get("filters") or {}, bid, b.get("siteId")))
 
+    @guarded
     async def wrapped(req: Request):
-        try:
-            return JSONResponse(views.wrapped(gw(), bid_of(req), req.query_params.get("siteId")))
-        except PlaybookError as e:
-            return err(e)
+        _, bid = buyer_of(req)
+        return JSONResponse(views.wrapped(gw(), bid, req.query_params.get("siteId")))
 
+    @guarded
     async def history(req: Request):
+        _, bid = buyer_of(req)
         qp = req.query_params
         try:
-            return JSONResponse(views.order_history(gw(), bid_of(req), int(qp.get("page", 1)), min(200, int(qp.get("size", 50))),
+            return JSONResponse(views.order_history(gw(), bid, int(qp.get("page", 1)), min(200, int(qp.get("size", 50))),
                                                     qp.get("q"), qp.get("siteId"), qp.get("type"), qp.get("sort", "date"), qp.get("dir", "desc")))
-        except (PlaybookError, ValueError) as e:
-            return JSONResponse({"error": "bad_request", "message": str(e)}, status_code=400)
+        except ValueError as e:
+            return JSONResponse({"error": "bad_request", "message": str(e), "fix": {"example": "?page=1&size=50"}}, status_code=400)
 
+    @guarded
     async def kitchens_ep(req: Request):
-        try:
-            return JSONResponse(views.kitchens(gw(), bid_of(req)))
-        except PlaybookError as e:
-            return err(e)
+        _, bid = buyer_of(req)
+        return JSONResponse(views.kitchens(gw(), bid))
 
+    @guarded
     async def order_detail(req: Request):
-        return JSONResponse(views.order_detail(gw(), bid_of(req), req.path_params["oid"]))
+        _, bid = buyer_of(req)
+        return JSONResponse(views.order_detail(gw(), bid, req.path_params["oid"]))
 
+    @guarded
     async def activity(req: Request):
-        return JSONResponse({"activity": state["agent"].activity(req.path_params["sid"])})
+        sid = req.path_params["sid"]
+        s = gw().engine.sessions.get(sid)
+        c = caller(req, "user", "human", "agent", "ops")
+        if not s:
+            raise NotFound(f"No session {sid}.")
+        auth.same_buyer(c, s["buyerId"])
+        return JSONResponse({"activity": state["agent"].activity(sid)})
 
     # MCP over Streamable HTTP on THIS gateway: an MCP agent shares sessions, approvals, stock and audit with REST
     from . import mcp_app
