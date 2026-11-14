@@ -1,4 +1,5 @@
-"""Screenshots of the six golden scenarios + main views, 390 px and 1280 px, light and dark.
+"""Screenshots of the six golden scenarios + main views (v3) + forecast and the Valio Aimo view (v5),
+390 px and 1280 px, light and dark.
 
     make run            # in another terminal (gateway on :8000)
     python scripts/screenshots.py   -> docs/screenshots/v2/*.png
@@ -88,12 +89,12 @@ def scenarios(page, tag):
     page.locator('[data-go="settings"]:visible').first.click(); page.wait_for_timeout(600)
     shot(page, f"settings-{tag}")
     # s3 new kitchen -> product choice -> basket
-    open_app(page, "BUY-UUSI"); say(page, "100 L milk by Wednesday")
+    open_app(page, "BUY-UUSI"); new_chat(page); say(page, "100 L milk by Wednesday")  # the demo seed already has one Uusi chat
     shot(page, f"s3-choice-{tag}", '.card[data-type="choice"]')
-    page.locator('.card[data-type="choice"] .opt').first.click(); wait_idle(page)
+    page.locator('.card[data-type="choice"]').last.locator('.opt').first.click(); wait_idle(page)
     shot(page, f"s3-basket-{tag}", '.card[data-type="basket"]')
     # s4 allergen conflict
-    open_app(page, "BUY-KOULU"); say(page, "60 L oat drink by Monday")
+    open_app(page, "BUY-KOULU"); new_chat(page); say(page, "60 L oat drink by Monday")
     shot(page, f"s4-cant-do-{tag}", '.card[data-type="cant_do"]')
     # empty chat / first screen
     new_chat(page); page.wait_for_timeout(200)
@@ -130,6 +131,16 @@ def v3_views(page, tag):
     shot(page, f"v3-kitchens-{tag}")
     page.locator(".site").first.click(); page.wait_for_timeout(500)
     shot(page, f"v3-kitchen-panel-{tag}")
+    page.keyboard.press("Escape"); page.wait_for_timeout(300)
+    # v5: forecast in Explore, and Valio Aimo's operations view (demo switch)
+    go(page, "insights")
+    page.locator('[data-itab="explore"]').click(); page.wait_for_timeout(800)
+    page.fill("#ex-q", "forecast spend for the next months")
+    page.press("#ex-q", "Enter"); page.wait_for_timeout(2500)
+    shot(page, f"v5-forecast-{tag}", "#ex-chart")
+    go(page, "settings")
+    page.locator("[data-opsview]").click(); page.wait_for_timeout(2500)
+    shot(page, f"v5-valio-aimo-view-{tag}")
 
 
 def main():

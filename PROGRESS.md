@@ -10,6 +10,8 @@ Plan: docs/superpowers/plans/2026-11-14-v5-gateway-hardening-seller-ops.md (Task
 - Operations view (11): `/v1/ops/metrics`, `/demand`, `/lost-sales` (k ≥ 3), ops MCP mode, Kitchens › Valio Aimo view; demo seed with four kitchens.
 - Tests: 279 passed + 1 opt-in live test (passed). Live: `make agent` (both flows on live prices), `--suggestions`, `make bench` all pass.
 - Not built: chef-app "From Valio Aimo" suggestion card; LLM bench rows (no Anthropic key on this machine).
+- Published: artifact https://claude.ai/artifact/WemSdQFg5vy35Ki2YkeAbi version 4 (`1794666826-c172`), built from `ui/dist/artifact.html` (recorded demo; the operations view needs the live gateway).
+- Screenshots: `docs/screenshots/v2` regenerated, plus `v5-forecast-*` and `v5-valio-aimo-view-*` (390/1280, light/dark).
 
 ## v4 — challenge audit (14 Nov 2026)
 - Audited against docs/CHALLENGE_BRIEF.md and the planning-session checklist → **docs/CHALLENGE_CHECKLIST.md** (core 1–4, underlying 5–8, optional 9–11 all PASS; scenarios: 3 PASS, 2 PARTIAL, proactive seller agent not built).
