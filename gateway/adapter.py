@@ -52,6 +52,7 @@ class FixtureBackend:
         self.prices = {p["gtin"]: p["unitPrice"] for p in catalog.products()}
         self.earliest_override: dict[str, date] = {}
         self.orders: list[dict] = []
+        self.restock_used: dict[str, dict[str, float]] = {}  # gtin -> restock date -> qty already sold from it
         self.live: dict[str, dict] = {}  # curated products priced from the mock API (live mode)
 
     # --- real products bridged in by Discover --------------------------------
@@ -84,9 +85,13 @@ class FixtureBackend:
         for ib in self.inbound.get(gtin, []):
             d = max(delivery_day(today + timedelta(days=ib["inDays"])), self.earliest(gtin))
             out.append({"date": d2s(d), "qty": ib["qty"]})
-        for week in range(1, 7):  # regular weekly restock for planning further ahead
+        used = self.restock_used.get(gtin, {})
+        for week in range(1, 7):  # regular weekly restock for planning further ahead, less what orders already took
             if self.base_stock.get(gtin):
-                out.append({"date": d2s(delivery_day(today + timedelta(days=7 * week))), "qty": self.base_stock[gtin], "restock": True})
+                day = d2s(delivery_day(today + timedelta(days=7 * week)))
+                left = self.base_stock[gtin] - used.get(day, 0)
+                if left > 1e-9:
+                    out.append({"date": day, "qty": left, "restock": True})
         return sorted(out, key=lambda x: x["date"])
 
     def available_by(self, gtin: str, by: date) -> float:
@@ -122,6 +127,13 @@ class FixtureBackend:
                     break
                 t = min(ib["qty"], rest)
                 ib["qty"] -= t
+                rest -= t
+            for r in [x for x in self.schedule(g) if x.get("restock") and x["date"] <= ln.get("deliveryDate", "9999")]:
+                if rest <= 1e-9:
+                    break
+                t = min(r["qty"], rest)
+                used = self.restock_used.setdefault(g, {})
+                used[r["date"]] = used.get(r["date"], 0) + t
                 rest -= t
         self.orders.append(order)
         return {"backendOrderRef": f"AIMO-SO-{len(self.orders) + 880000}", "status": "confirmed"}

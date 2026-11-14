@@ -300,6 +300,33 @@ def make_app(live: bool = True) -> Starlette:
         return JSONResponse({"verify": gw().audit.verify(full=full), "events": ev})
 
     @guarded
+    async def ops_orders(req: Request):
+        caller(req, "ops")
+        return JSONResponse({"orders": [{k: v for k, v in o.items() if k != "confirmation"} | {"confirmationJws": o["confirmation"]["jws"]}
+                                        for o in gw().orders.values()]})
+
+    @guarded
+    async def ops_inventory(req: Request):
+        caller(req, "ops")
+        be = gw().backend
+        want = [g for g in (req.query_params.get("gtins") or "").split(",") if g] or list(be.stock)
+        return JSONResponse({"asOf": gw().clock.now().isoformat(),
+                             "inventory": {g: {"stock": be.stock.get(g, 0), "schedule": be.schedule(g)} for g in want if g in be.stock}})
+
+    @guarded
+    async def demo_clock(req: Request):
+        c = caller(req, "ops", "user")
+        if c.kind != "ops" and not auth.demo_mode():
+            raise auth.AuthError(403, "forbidden", "Moving the clock needs the operations credential outside demo mode.")
+        b = await body(req)
+        mins = float(b.get("advanceMinutes", 0))
+        if not 0 <= mins <= 60 * 24 * 40:
+            raise PlaybookError("advanceMinutes is 0 to 57600.", fix={"example": {"advanceMinutes": 16}})
+        now = gw().clock.advance(mins)
+        gw().audit.append(trace_id=None, actor=c.label, action="demo.clock", buyer_id=None, reason=f"clock moved {mins:g} min")
+        return JSONResponse({"now": now.isoformat()})
+
+    @guarded
     async def ops_metrics_raw(req: Request):
         caller(req, "ops")
         return JSONResponse(gw().metrics.snapshot(gw()))
@@ -545,6 +572,8 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/offers/{oid}", offer_get), Route("/v1/offers/{oid}/verify", offer_verify, methods=["POST"]),
         Route("/v1/orders/{oid}", order_get), Route("/v1/approvals", approval_inbox),
         Route("/v1/ops/agents/{aid}/pause", ops_pause, methods=["POST"]), Route("/v1/ops/metrics-raw", ops_metrics_raw),
+        Route("/v1/ops/orders", ops_orders), Route("/v1/ops/inventory", ops_inventory),
+        Route("/v1/demo/clock", demo_clock, methods=["POST"]),
         Route("/mcp", _Asgi(mcp_asgi), methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_asgi),
     ])
     app.add_middleware(RequestLog, metrics_of=lambda: gw().metrics)

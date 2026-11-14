@@ -430,3 +430,18 @@ def test_parallel_calls_on_one_session_never_mix_plan_and_offers():
     assert [o["offerId"] for o in s["data"]["plan"]["offers"]] == offer_ids(s)
     assert s["toolCalls"] == len(s["log"])
     assert gw.engine.locks[sid]
+
+
+def test_orders_against_weekly_restock_deplete_it():
+    """Found by the multi-agent bench: quantity taken from a future weekly restock must not be sold twice."""
+    from gateway.adapter import FixtureBackend
+    from gateway.clock import Clock
+    be = FixtureBackend(Clock(frozen=True))
+    g = next(iter(be.stock))
+    be.stock[g], be.inbound[g], be.base_stock[g] = 100, [], 500
+    d = next(x["date"] for x in be.schedule(g) if x.get("restock"))
+    assert be.available_by(g, s2d(d)) == 600
+    line = {"gtin": g, "qty": 600, "deliveryDate": d}
+    assert be.reserve([line])[0]
+    be.place_order({"orderId": "O1", "lines": [line]})
+    assert be.available_by(g, s2d(d)) == 0 and not be.reserve([dict(line, qty=1)])[0]

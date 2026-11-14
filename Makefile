@@ -20,3 +20,6 @@ setup:
 
 agent:
 	$(PY) scripts/agent_demo.py && $(PY) scripts/agent_demo.py --over-limit
+
+bench:  # needs `make run` in another terminal; writes docs/BENCH.md
+	$(PY) scripts/agent_bench.py --agents 10
