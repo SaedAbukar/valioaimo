@@ -72,6 +72,8 @@ def diet_of(p: dict) -> set[str]:
             out.add(tag)
     if "milk" not in p.get("contains", []) and "milk" not in p.get("may", []):
         out.add("milk_free")
+    if "vegan" in out:
+        out.add("vegetarian")
     if "nuts" not in p.get("contains", []) + p.get("may", []) and "peanuts" not in p.get("contains", []) + p.get("may", []):
         out.add("nut_free")
     return out

@@ -5,6 +5,7 @@ WHAT it returns. Reuses planner.py, policy.py (via Gateway.evaluate) and trust.p
 from __future__ import annotations
 
 import json
+import re
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -78,6 +79,11 @@ def parse_request(gw, s: dict, args: dict) -> dict:
             raise GuardFailed("parse_request needs 'text' (or 'answer').", guard="bad_input",
                               fix={"example": {"text": "I need 1,000 litres of lactose-free milk by Monday."}})
         brief = U.parse(args["text"], today, buyer["site"], recipes)
+    if "what" in brief.get("missing", []):  # tell the agent how to fill the gap instead of guessing
+        brief["hint"] = ("The dish is not in the recipe book. Either name dishes it knows (" +
+                         ", ".join(sorted({r["aliases"][0] for r in recipes if r["course"] in ("main", "starter", "dessert")})[:25]) +
+                         ") or send the products with amounts and a date as text, e.g. "
+                         "'20 kg wheat flour, 12 kg passata, 14 kg vegan cheese by 19 Nov 2026'. Ask the chef if unsure.")
     d["brief"] = brief
     return brief
 
@@ -197,12 +203,42 @@ def _live(gw, s) -> bool:
     return gw.buyers[s["buyerId"]].get("assortment") == "aimo"
 
 
+DIET_TAGS = [(r"\b(vegan|vegaani\w*)\b", "vegan"), (r"\b(vegetarian|kasvis\w*)\b", "vegetarian"),
+             (r"\bgluten[- ]?free\b|\bgluteeniton\b", "gluten_free"), (r"\blactose[- ]?free\b|\blaktoositon\b", "lactose_free"),
+             (r"\b(milk|dairy)[- ]?free\b|\bmaidoton\b", "milk_free"), (r"\bnut[- ]?free\b", "nut_free")]
+
+
+def _diet_split(text: str) -> tuple[str, set[str]]:
+    """'vegan cheese' -> ('cheese', {'vegan'}): diet words are hard filters, not search words."""
+    tags = set()
+    for pat, tag in DIET_TAGS:
+        if re.search(pat, text, re.I):
+            tags.add(tag)
+            text = re.sub(pat, " ", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip(), tags
+
+
+def _session_diet(s: dict) -> set[str]:
+    """Diets that apply to everything in this order (the whole event, or the request as a whole)."""
+    b = (s.get("data") or {}).get("brief") or {}
+    c = b.get("constraints") or {}
+    out = {str(x).replace("-", "_") for x in c.get("diet") or []}
+    guests = (b.get("event") or {}).get("guests")
+    out |= {k for k, n in (c.get("dietCounts") or {}).items() if guests and n >= guests}
+    return out
+
+
 def search_products(gw, s, args):
-    q = args.get("query") or args.get("need") or ""
-    if _live(gw, s) or not catalog.resolve_need(q)["kind"]:
-        r = aimo_products.search(q, exclude_allergens=args.get("excludeAllergens"), diet=args.get("diet"), limit=args.get("limit", 10))
-        return {"source": "valio-aimo", **r}
-    return {"source": "assortment", **catalog.search(q, exclude_allergens=args.get("excludeAllergens"))}
+    q0 = args.get("query") or args.get("need") or ""
+    q, said = _diet_split(q0)
+    diet = sorted(set(args.get("diet") or []) | said | _session_diet(s))
+    excl = args.get("excludeAllergens")
+    if not _live(gw, s) and catalog.resolve_need(q or q0)["kind"]:
+        r = catalog.search(q or q0, diet=diet, exclude_allergens=excl)
+        if r["products"] or not diet:
+            return {"source": "assortment", "dietApplied": diet, **r}
+    r = aimo_products.search(q or q0, exclude_allergens=excl, diet=diet, limit=args.get("limit", 10))
+    return {"source": "valio-aimo", "dietApplied": diet, **r}
 
 
 def get_product(gw, s, args):
@@ -223,15 +259,18 @@ def request_offers(gw, s: dict, args: dict) -> dict:
     excl = _exclusions(gw, s)
     out = []
     for need in d["recall"]["gaps"]:
+        q, said = _diet_split(need)
+        diet = sorted(said | _session_diet(s))
         rn = catalog.resolve_need(need)
-        if _live(gw, s) or not rn["kind"]:
-            r = discover.search_live(gw, _query(need), rn["kind"], need_by, excl, [], limit=10)
+        fits = [g for g in rn["candidates"] if set(diet) <= set(catalog.by_gtin(g)["diet"])] if rn["kind"] else []
+        if _live(gw, s) or not rn["kind"] or not fits:
+            r = discover.search_live(gw, _query(q or need), rn["kind"], need_by, excl, diet, limit=10)
             qty = next((l["qty"] for l in b.get("lines", []) if l["text"] == need), 0)
             big = [p for p in r["products"] if not qty or p["packSize"] >= qty / 150]  # no 2.5 dl cartons for 100 L
             cands = (big if len(big) >= 2 else r["products"])[:6]
             source = "valio-aimo"
         else:
-            cands = [catalog.by_gtin(g) for g in rn["candidates"]][:6]
+            cands = [catalog.by_gtin(g) for g in fits][:6]
             source = "assortment"
         offers = []
         for p in cands[:6]:

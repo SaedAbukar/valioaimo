@@ -157,6 +157,10 @@ def parse_event(text: str, today: date, recipes: list[dict]) -> dict:
         key = "vegan" if re.search("vegan|vegaani", w) else "vegetarian" if re.search("vegetarian|kasvis", w) else \
             "gluten_free" if re.search("gluten|coeliac|keliaak|glutee", w) else "lactose_free"
         diet[key] += n
+    for key, pat in (("vegan", r"vegan|vegaani"), ("vegetarian", r"vegetarian|kasvis"), ("gluten_free", r"gluten[- ]free|gluteeniton|keliaak"),
+                     ("lactose_free", r"lactose[- ]free|laktoositon")):
+        if guests and not diet[key] and re.search(r"\b(all|everything|every|whole|kaikki|only)\b[^.]{0,30}(" + pat + ")|(" + pat + r")\w*\s+(only|party|event|pizza|menu|food|products?|juhl|menu)|^\s*(" + pat + ")", text, re.I):
+            diet[key] = guests  # the whole event follows the diet
     allergies: dict[str, int] = {}
     for m in re.finditer(r"(\d+|one|a|an|two|three|four|five|yksi|kaksi|kolme|neljä|viisi)?\s*(tree nut|peanut|nut|egg|fish|shellfish|milk|dairy|sesame|soy|celery|mustard|gluten|maapähkinä|pähkinä|kala|kananmuna|maito|seesami)[- ]?(?:allerg(?:y|ies|ic)|allergia|allergikkoa|allergikko|allerginen)", text, re.I):
         a = ALLERGY_WORDS[m.group(2).lower()]
