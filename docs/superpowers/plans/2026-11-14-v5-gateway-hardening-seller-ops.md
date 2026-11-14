@@ -478,3 +478,40 @@ rulings in the ledger and docs/ASSUMPTIONS.md, keep PROGRESS.md current, keep `m
 every task, and push when green. Finish with the live checks and a summary listing rulings and
 deferred minors.
 ```
+
+---
+
+## Tasks 14–21: architecture audit of 48001b0 (added 14 Nov 2026 at the user's request)
+
+Same TDD process and Global Constraints. Scale to a Junction prototype (SQLite, demo tokens behind a demo mode). Order: after Task 12, before Tasks 7–11; Task 13's final review covers these too. Every scale-down is a Ruling in the ledger.
+
+### Task 14: Share state between MCP and REST (Critical, C1)
+MCP over Streamable HTTP at `/mcp` inside the `__main__` app, on the same `Gateway`; identity from the Bearer header. Stdio stays as a thin proxy to `AIMO_GATEWAY_URL` (or in-process for tests).
+Tests: an MCP agent calls `request_approval`, Laura approves over REST, `wait_for_update` wakes, `place_order` succeeds; stock is shared between channels.
+
+### Task 15: Close the chat approval bypass and lock down chef-app routes (Critical, C2 and C3)
+Chef app gets a buyer-user credential; chat approve/decline need the approver's human credential; `/v1/demo/reset` ops-only or demo mode; `/v1/board`, `/v1/chats*`, `/v1/orders/{sid}/activity`, `/v1/orders/history*`, `/v1/insights*`, `/v1/kitchens`, `/v1/settings` authenticated with buyer from the credential. Credentials from the environment; `demo-*` only when `AIMO_DEMO=1` (default for `make run`). `hmac.compare_digest`.
+Tests: each route 401/403 without the right credential; chat approve needs a human credential; UI still works (browser, 390 and 1280 px).
+
+### Task 16: Ticking clock and kill switch on every call (High, H1 and H2)
+Default to a ticking clock, frozen only in tests; test offers expire in the server. Check the kill switch in `Engine._call` for every tool and pass `killSwitch` into the policy context (V3). Test a paused agent's `place_order` is blocked mid-session.
+
+### Task 17: Per-session lock and atomic tool steps (High and Medium, H3 and M1)
+Per-session lock around `Engine._call`; run tools on a deep copy of session data, commit only after the output schema check; `_place` releases stock if signing/recording fails after `backend.place_order`.
+Tests: parallel calls on one session never mix plan/offer versions; a forced schema failure leaves the session unchanged.
+
+### Task 18: Resilient adapter (High, H4)
+Engine and lookup calls via `anyio.to_thread`; retry with jitter (2 tries); circuit breaker (open after 3 failures, 30 s cool-down, fallback to demo values with `priceSource` flagged); short deadline per request; `/health` returns the error class only.
+Tests with a failing/slow fake client: breaker opens, fallbacks flagged, other requests not blocked.
+
+### Task 19: Audit rejected calls; logging, metrics, tracing (High and Medium, H6 and M7)
+Audit every 403/409/422 as `rejected.<tool>` with actor, guard and code. Structured JSON logs with request id, session id and W3C `traceparent` passthrough. `GET /v1/ops/metrics-raw` (ops): call counts, decision mix, 409/422 rates, adapter latency and errors, breaker state; merged with Task 11.
+Test: an agent's attempt to approve itself appears in the audit as rejected.
+
+### Task 20: Validate input everywhere, bound resource use (Medium, M2–M4)
+Lookup bodies validated with JSON Schemas (422 + fix); MCP `call_tool` malformed `args_json` → structured 422; `ask_insight` filters get a schema. One condition per session in `events.py`; bounded long-poll pool (503 + Retry-After when full). Evict expired idempotency entries, API cache entries and event logs. Incremental `audit.verify()`. Tests.
+
+### Task 21: Structure and MCP polish (Medium and Low, M5, M6, L1–L6)
+`gateway/authz.py` used by REST and MCP (fixes `get_order` drift); `Backend` Protocol; inbox and audit filtering out of `__main__.py`; no `gw.insights` side effect in `Analyst.__init__`; split `tools.py` if simple; `discover_gateway` uses the configured base URL; `AuditLedger.tamper()` to test helpers; `start_session` accepts an idempotency key; MCP protocol-level errors (`isError`); optionally narrow the MCP tool list (`list_changed`) or record a Ruling.
+
+Afterwards: docs/EXPOSURE.md, STANDARDS.md (Streamable HTTP MCP, traceparent, circuit breaker), CHALLENGE_CHECKLIST.md (Robustness section), ASSUMPTIONS.md, PROGRESS.md. Report which findings are closed or scaled down, with the proving tests.
