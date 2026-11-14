@@ -34,6 +34,7 @@ from .playbook import insights  # noqa: E402
 from .playbook.agent import ChefAssistant  # noqa: E402
 from .playbook.engine import PlaybookError, public_playbook  # noqa: E402
 from . import manifest, discovery, lookup, auth  # noqa: E402
+from .ratelimit import RateLimiter  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
 from .playbook.tools import decide_approval  # noqa: E402
 from .analytics import engine as insight_engine, views  # noqa: E402
@@ -91,8 +92,17 @@ def make_app(live: bool = True) -> Starlette:
     def caller(req: Request, *kinds: str) -> auth.Caller:
         return auth.require(gw(), req.headers.get("authorization"), *kinds)
 
+    limiter = RateLimiter.from_env()
+
     def guarded(fn):
         async def wrap(req: Request):
+            h = req.headers.get("authorization") or ""
+            token = h.split(None, 1)[1].strip() if h.lower().startswith("bearer ") and " " in h else None
+            if token and token != auth.OPS_TOKEN and (wait := limiter.check(token)) is not None:
+                return JSONResponse({"error": "rate_limited", "message": f"Too many calls from this credential. Retry in {wait:g} s.",
+                                     "retryAfter": wait, "fix": {"retryAfterSeconds": wait,
+                                                                 "hint": "wait_for_update / ?wait= long-poll instead of polling"}},
+                                    status_code=429, headers={"Retry-After": str(max(1, int(-(-wait // 1))))})
             try:
                 return await fn(req)
             except auth.AuthError as e:

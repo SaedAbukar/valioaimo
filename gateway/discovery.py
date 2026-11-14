@@ -76,12 +76,14 @@ def _json(schema: dict, desc: str = "OK") -> dict:
 
 ERRORS = {"401": _json(_ref("Error"), "No or unknown credential"), "403": _json(_ref("Error"), "Credential not allowed here"),
           "409": _json(_ref("Error"), "step_not_allowed: out of order, see next_allowed_tools"),
-          "422": _json(_ref("Error"), "guard_failed: bad input, see fix")}
+          "422": _json(_ref("Error"), "guard_failed: bad input, see fix"),
+          "429": {**_json(_ref("Error"), "rate_limited: wait retryAfter seconds (per credential; operations exempt)"),
+                  "headers": {"Retry-After": {"schema": {"type": "integer"}, "description": "Seconds (RFC 9110)"}}}}
 
 
 def _op(summary: str, tag: str, resp: dict, body: dict | None = None, params: list | None = None, auth: bool = True,
         errors: tuple = ("401", "403")) -> dict:
-    op = {"summary": summary, "tags": [tag], "responses": {"200": resp, **{k: ERRORS[k] for k in errors}}}
+    op = {"summary": summary, "tags": [tag], "responses": {"200": resp, **{k: ERRORS[k] for k in errors + ("429",)}}}
     if body:
         op["requestBody"] = {"required": True, "content": {"application/json": {"schema": body}}}
     if params:

@@ -289,3 +289,28 @@ def test_app_restart_with_aimo_db_keeps_orders_and_reset_wipes(tmp_path, monkeyp
     assert c2.get(f"/v1/orders/{oid}", headers=AGENT).json()["confirmationVerified"]
     c2.post("/v1/demo/reset")
     assert c2.get(f"/v1/orders/{oid}", headers=AGENT).status_code == 404
+
+
+# ---------------------------------------------------------------- Task 6: rate limits
+def test_burst_over_limit_is_429_with_retry_after(monkeypatch):
+    monkeypatch.setenv("AIMO_RATE_PER_MIN", "60")
+    monkeypatch.setenv("AIMO_RATE_BURST", "5")
+    c = TestClient(make_app(live=False))
+    codes = [c.post("/v1/products/search", json={"query": "milk"}, headers=AGENT).status_code for _ in range(8)]
+    assert codes[:5] == [200] * 5 and codes[5] == 429
+    r = c.post("/v1/products/search", json={"query": "milk"}, headers=AGENT)
+    assert r.json()["error"] == "rate_limited" and 0 < r.json()["retryAfter"] <= 1.5 and int(r.headers["Retry-After"]) >= 1
+    assert r.json()["fix"]
+    # another agent has its own bucket; operations are exempt
+    assert c.post("/v1/products/search", json={"query": "milk"}, headers={"Authorization": "Bearer demo-key-kaarela"}).status_code == 200
+    assert all(c.get("/v1/audit", headers={"Authorization": "Bearer demo-ops"}).status_code == 200 for _ in range(10))
+    assert "429" in c.get("/openapi.json").json()["paths"]["/v1/products/search"]["post"]["responses"]
+
+
+def test_rate_limiter_refills():
+    from gateway.ratelimit import RateLimiter
+    t = [0.0]
+    rl = RateLimiter(rate_per_min=60, burst=2, now=lambda: t[0])
+    assert rl.check("a") is None and rl.check("a") is None and rl.check("a") == pytest.approx(1.0)
+    t[0] = 1.0
+    assert rl.check("a") is None

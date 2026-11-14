@@ -31,6 +31,7 @@ from .analytics.engine import insight_playbook, public as insight_public  # noqa
 from . import auth, discovery, lookup, manifest, mcp_tools, trust  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
 from .policy import published_rules  # noqa: E402
+from .ratelimit import RateLimiter  # noqa: E402
 
 GW = Gateway(live=os.environ.get("AIMO_LIVE", "1") == "1")
 ME = auth.resolve(GW, "Bearer " + os.environ.get("AIMO_AGENT_TOKEN", "demo-key-pohjola"))
@@ -43,7 +44,12 @@ def _dump(x) -> str:
     return json.dumps(x, ensure_ascii=False, default=str)
 
 
+LIMIT = RateLimiter.from_env()
+
+
 def _run(session_id: str | None, tool: str, args: dict) -> str:
+    if (wait := LIMIT.check(ME.agent_id)) is not None:
+        return _dump({"status": 429, "error": "rate_limited", "retryAfter": wait, "fix": {"retryAfterSeconds": wait}})
     try:
         if session_id:
             s = GW.engine.session(session_id)
