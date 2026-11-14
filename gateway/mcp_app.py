@@ -27,6 +27,7 @@ from .analytics.engine import insight_playbook, public as insight_public
 from .crypto import verify_jws
 from .playbook.engine import PlaybookError, playbook, public_playbook, validate_input
 from .policy import published_rules
+from .observability import audit_rejection
 from .ratelimit import RateLimiter
 
 CALLER: contextvars.ContextVar[auth.Caller | None] = contextvars.ContextVar("mcp_caller", default=None)
@@ -64,6 +65,8 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
                     return _dump({"status": 403, "error": "forbidden", "message": "This session belongs to another agent."})
             return _dump(G().engine.call(session_id, name, args, actor=me.label if name == "start_session" else None))
         except PlaybookError as e:
+            audit_rejection(G(), me.label, me.buyer_id, name, e.status, e.body(),
+                            trace_id=session_id if session_id in G().engine.sessions else None)
             return _dump({"status": e.status, **e.body()})
 
     def run_insight(session_id, name, args):

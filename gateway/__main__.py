@@ -37,6 +37,7 @@ from .playbook.agent import ChefAssistant  # noqa: E402
 from .playbook.engine import PlaybookError, public_playbook  # noqa: E402
 from . import manifest, discovery, lookup, auth  # noqa: E402
 from .ratelimit import RateLimiter  # noqa: E402
+from .observability import RequestLog, audit_rejection  # noqa: E402
 from . import seller  # noqa: E402
 from .playbook.engine import NotFound, validate_input  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
@@ -125,10 +126,21 @@ def make_app(live: bool = True) -> Starlette:
             try:
                 return await fn(req)
             except auth.AuthError as e:
+                rejected(req, fn.__name__, e.status, e.body())
                 return JSONResponse(e.body(), status_code=e.status)
             except PlaybookError as e:
+                rejected(req, fn.__name__, e.status, e.body())
                 return err(e)
         return wrap
+
+    def rejected(req: Request, route: str, status: int, body_: dict):
+        """Audit a refused call (403/409/422) with who tried, what, and which guard stopped it."""
+        g = gw()
+        c = auth.resolve(g, req.headers.get("authorization"))
+        key = req.path_params.get("sid")
+        sid = g.approvals.get(key, key) if key else None
+        audit_rejection(g, c.label if c else "anonymous", c.buyer_id if c else None, req.path_params.get("tool") or route,
+                        status, body_, trace_id=sid if sid in g.engine.sessions else None)
 
     def own_session(req: Request) -> tuple[auth.Caller, dict]:
         c = caller(req, "agent", "ops")
@@ -288,6 +300,11 @@ def make_app(live: bool = True) -> Starlette:
         # a buyer sees its own trail; Valio Aimo operations see every buyer
         ev = gw().audit.events(trace_id=sid, buyer_id=None if c.kind == "ops" else c.buyer_id, limit=300)
         return JSONResponse({"verify": gw().audit.verify(), "events": ev})
+
+    @guarded
+    async def ops_metrics_raw(req: Request):
+        caller(req, "ops")
+        return JSONResponse(gw().metrics.snapshot(gw()))
 
     @guarded
     async def ops_pause(req: Request):
@@ -526,9 +543,10 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/sessions/{sid}/log", session_log), Route("/v1/sessions/{sid}/events", session_events),
         Route("/v1/offers/{oid}", offer_get), Route("/v1/offers/{oid}/verify", offer_verify, methods=["POST"]),
         Route("/v1/orders/{oid}", order_get), Route("/v1/approvals", approval_inbox),
-        Route("/v1/ops/agents/{aid}/pause", ops_pause, methods=["POST"]),
+        Route("/v1/ops/agents/{aid}/pause", ops_pause, methods=["POST"]), Route("/v1/ops/metrics-raw", ops_metrics_raw),
         Route("/mcp", _Asgi(mcp_asgi), methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_asgi),
     ])
+    app.add_middleware(RequestLog, metrics_of=lambda: gw().metrics)
     app.state.gw = gw  # the live Gateway (replaced on /v1/demo/reset); used by tests and tools
     return app
 
@@ -536,4 +554,6 @@ def make_app(live: bool = True) -> Starlette:
 app = make_app(live=os.environ.get("AIMO_LIVE", "1") == "1")
 
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")  # aimo.gateway emits one JSON line per request
     uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", "8000")))

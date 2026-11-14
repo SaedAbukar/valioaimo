@@ -222,6 +222,8 @@ def openapi(base: str = "") -> dict:
                                                    _json({"type": "object"}), _ref("ApprovalDecision"), [_p("approvalId"), IDEMPOTENCY_KEY], errors=("401", "403", "422"))},
         "/v1/audit": {"get": _op("Hash-chained audit log (own buyer; operations see all) and its verification", "Audit",
                                  _json({"type": "object"}), params=[_p("sessionId", "query")])},
+        "/v1/ops/metrics-raw": {"get": _op("Valio Aimo operations: raw counters (tool calls, decision mix, 409/422 rates, adapter "
+                                           "latency, errors, circuit breaker)", "Operations", _json({"type": "object"}))},
         "/v1/ops/agents/{agentId}/pause": {"post": _op("Valio Aimo operations: pause or resume an agent (kill switch)", "Operations",
                                                        _json({"type": "object"}), {"type": "object", "properties": {"paused": {"type": "boolean"}}}, [_p("agentId")])},
     }

@@ -25,6 +25,8 @@ class Gateway:
     def __init__(self, db: str = ":memory:", clock: Clock | None = None, live: bool = False, keys_dir: str | Path | None = None):
         # the server's clock ticks (offers expire, idempotency TTL, offer.expiring); tests freeze it (AIMO_CLOCK_FROZEN=1)
         self.clock = clock or Clock(frozen=os.environ.get("AIMO_CLOCK_FROZEN") == "1")
+        from .observability import Metrics
+        self.metrics = Metrics()
         self.lock = threading.RLock()  # order placement: verify -> reserve -> place is atomic (no overselling)
         self.store = Store(db)
         self.backend = FixtureBackend(self.clock)
