@@ -122,7 +122,7 @@ def plan_line(ctx: dict, req: dict, need_by: date, choice: str | None = None, us
             code, reason = "never_buy", nb
         elif failed:
             code, reason = "filter", "Required filter: " + "; ".join(failed)
-        elif unit_req and p["unit"] != unit_req:
+        elif unit_req and p["unit"] != unit_req and {p["unit"], unit_req} != {"L", "kg"}:  # food liquids: about 1 kg per litre
             code, reason = "unit", f"Sold per {p['unit']}, request is in {unit_req}"
         elif hab and [hab["gtin"], g] in blocked_pairs:
             code, reason = "blocked_swap", f"Swap from {hab['name']} blocked by mandate (kitchen rejected it)"

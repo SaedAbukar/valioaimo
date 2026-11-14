@@ -171,12 +171,13 @@ class Engine:
             out = list(pb["byId"]["recall"]["tools"])
             if d.get("recall"):
                 out = ["search_products", "get_product", "request_offers"] if d["recall"]["gaps"] else ["plan_basket"]
+            out.append("parse_request")  # the chef changed the request: back to Understand
         elif step == "discover":
-            out = ["search_products", "get_product", "request_offers"] + (["plan_basket"] if d.get("candidates") else [])
+            out = ["search_products", "get_product", "request_offers"] + (["plan_basket"] if d.get("candidates") else []) + ["parse_request"]
         elif step == "plan":
-            out = ["plan_basket", "check_basket"]
+            out = ["plan_basket", "check_basket", "parse_request"]
         elif step == "check":
-            out = ["render_cards"]
+            out = ["render_cards", "parse_request"]
         elif step == "present":
             dec = (d.get("decision") or {}).get("decision")
             ready = d.get("plan") and not d["plan"].get("pendingChoices") and not d["plan"].get("cantDo")

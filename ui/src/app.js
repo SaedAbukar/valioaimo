@@ -254,7 +254,11 @@ const AGENT_SAYS = {
   plan_basket: 'Putting the basket together', check_basket: 'Checking your rules and spending limit',
   render_cards: 'Preparing the summary', request_approval: 'Asking for an OK', wait_for_update: 'Waiting for the OK',
   place_order: 'Placing the order', get_suggestions: 'Checking offers from Valio Aimo',
-  get_rules: 'Checking what I may do on my own', whoami: 'Checking what I may do on my own', get_playbook: 'Checking the steps to follow',
+  get_rules: 'Checking what I may do on my own', ask_user: 'Checking one detail',
+  get_favourites: 'Checking your favourites and past orders', find_similar_orders: 'Checking your favourites and past orders',
+  get_learned_quantities: 'Checking your favourites and past orders', get_standing_orders: 'Checking your favourites and past orders',
+  get_leftovers: 'Checking what you already have', get_session: 'Checking where we are', get_offer: 'Checking a price',
+  verify_offer: 'Checking a price', get_order: 'Checking the order', suggestion_feedback: 'Noting your choice', whoami: 'Checking what I may do on my own', get_playbook: 'Checking the steps to follow',
 };
 function agentSteps(events) {
   const out = [];
