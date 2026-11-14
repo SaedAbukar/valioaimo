@@ -294,6 +294,43 @@ def build(get_gw: Callable, get_analyst: Callable, get_me: Callable[[], auth.Cal
     return server, fns
 
 
+def build_ops(get_gw: Callable):
+    """MCP tools for Valio Aimo operations (AIMO_AGENT_TOKEN=demo-ops): cross-customer views, k >= 3, read-only."""
+    from . import ops
+    server = FastMCP("aimo-gateway-operations")
+    mcp = _Registrar(server)
+    fns: dict[str, Callable] = {}
+
+    def tool(fn):
+        mcp.tool()(fn)
+        fns[fn.__name__] = fn
+        return fn
+
+    def safe(fn, *a):
+        try:
+            return _dump(fn(get_gw(), *a))
+        except PlaybookError as e:
+            return _dump({"status": e.status, **e.body()})
+
+    @tool
+    def ops_metrics() -> str:
+        """Agent-channel metrics across customers (k >= 3): autonomous rate, approval rate and wait, re-quote rate,
+        blocked rate, fill rate, time to order, refused calls, seller-suggestion acceptance; plus raw counters."""
+        return safe(ops.metrics)
+
+    @tool
+    def ops_demand(from_: str | None = None, to: str | None = None, by: str = "day") -> str:
+        """Forward demand from agents' plans and orders, by need-by day, category or product (k >= 3 customers per group)."""
+        return safe(ops.demand, from_, to, by)
+
+    @tool
+    def ops_lost_sales(from_: str | None = None, to: str | None = None) -> str:
+        """Needs agents could not get from Valio Aimo, by reason (k >= 3 customers per group)."""
+        return safe(ops.lost_sales, from_, to)
+
+    return server, fns
+
+
 def http_app(get_gw: Callable, get_analyst: Callable, base_url: str = "http://127.0.0.1:8000"):
     """MCP over Streamable HTTP for the REST app: identity from each request's Bearer header (agents only).
     Returns (asgi app to mount at /mcp, the MCP server whose session_manager must run in the app lifespan)."""

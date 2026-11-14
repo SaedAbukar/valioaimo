@@ -40,7 +40,7 @@ from .playbook.approvals import inbox_for  # noqa: E402
 from .ratelimit import RateLimiter  # noqa: E402
 from .observability import RequestLog, audit_rejection  # noqa: E402
 from .events import Busy  # noqa: E402
-from . import seller  # noqa: E402
+from . import ops, seller  # noqa: E402
 from .playbook.engine import NotFound, validate_input  # noqa: E402
 from .crypto import verify_jws  # noqa: E402
 from .playbook.tools import decide_approval  # noqa: E402
@@ -298,6 +298,23 @@ def make_app(live: bool = True) -> Starlette:
         ev = gw().audit.events_for(c, trace_id=req.query_params.get("sessionId"))
         full = c.kind == "ops" and req.query_params.get("full") == "1"  # ops: re-hash the whole chain from genesis
         return JSONResponse({"verify": gw().audit.verify(full=full), "events": ev})
+
+    @guarded
+    async def ops_metrics(req: Request):
+        caller(req, "ops")
+        return JSONResponse(await off_loop(ops.metrics, gw()))
+
+    @guarded
+    async def ops_demand(req: Request):
+        caller(req, "ops")
+        q = req.query_params
+        return JSONResponse(await off_loop(ops.demand, gw(), q.get("from"), q.get("to"), q.get("by", "day")))
+
+    @guarded
+    async def ops_lost_sales(req: Request):
+        caller(req, "ops")
+        q = req.query_params
+        return JSONResponse(await off_loop(ops.lost_sales, gw(), q.get("from"), q.get("to")))
 
     @guarded
     async def ops_orders(req: Request):
@@ -572,7 +589,8 @@ def make_app(live: bool = True) -> Starlette:
         Route("/v1/offers/{oid}", offer_get), Route("/v1/offers/{oid}/verify", offer_verify, methods=["POST"]),
         Route("/v1/orders/{oid}", order_get), Route("/v1/approvals", approval_inbox),
         Route("/v1/ops/agents/{aid}/pause", ops_pause, methods=["POST"]), Route("/v1/ops/metrics-raw", ops_metrics_raw),
-        Route("/v1/ops/orders", ops_orders), Route("/v1/ops/inventory", ops_inventory),
+        Route("/v1/ops/orders", ops_orders), Route("/v1/ops/metrics", ops_metrics), Route("/v1/ops/demand", ops_demand),
+        Route("/v1/ops/lost-sales", ops_lost_sales), Route("/v1/ops/inventory", ops_inventory),
         Route("/v1/demo/clock", demo_clock, methods=["POST"]),
         Route("/mcp", _Asgi(mcp_asgi), methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_asgi),
     ])
